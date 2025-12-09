@@ -1,0 +1,183 @@
+name: "CI"
+
+on:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+      neo4j:
+        image: neo4j:5
+        env:
+          NEO4J_AUTH: neo4j/neo4j
+        ports:
+          - 7474:7474
+          - 7687:7687
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Set commit SHA
+        run: echo "GIT_SHA=${GITHUB_SHA}" >> $GITHUB_ENV
+      - run: |
+          pip install -r requirements.txt -r requirements-ci.txt \
+            flask flask-wtf flask-login wtforms pre-commit pytest requests \
+            python-dateutil rich scikit-learn watchdog PyYAML pydantic==2.4.0 \
+            boto3 httpx mypy jsonnet-binary
+      - id: diff
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "base=${{ github.event.pull_request.base.sha }}" >> $GITHUB_OUTPUT
+          else
+            echo "base=${{ github.event.before }}" >> $GITHUB_OUTPUT
+          fi
+          echo "head=${{ github.sha }}" >> $GITHUB_OUTPUT
+      - run: pre-commit run --from-ref ${{ steps.diff.outputs.base }} --to-ref ${{ steps.diff.outputs.head }} --show-diff-on-failure
+      - run: python scripts/docstring_quality.py --fail-under 0.80
+      - name: Mypy (non-strict)
+        run: mypy datacreek
+        continue-on-error: true
+      - name: Install jsonnet
+        run: sudo apt-get update && sudo apt-get install -y jsonnet
+      - name: Jsonnet format
+        run: |
+          for f in docs/grafana/*.jsonnet; do
+            jsonnetfmt -n 2 "$f"
+          done
+      - name: Compile dashboards
+        run: |
+          for f in docs/grafana/*.jsonnet; do
+            jsonnet "$f" >/dev/null
+          done
+      - name: Build container images
+        run: docker compose build
+      - name: Prometheus rules
+        run: >-
+          docker run --rm -v ${{ github.workspace }}/ops:/ops \
+            --entrypoint=promtool quay.io/prometheus/prometheus:latest \
+            check rules /ops/prometheus_rules.yml
+      - name: Prometheus rule tests
+        run: >-
+          docker run --rm -v ${{ github.workspace }}/ops:/ops \
+            --entrypoint=promtool quay.io/prometheus/prometheus:latest \
+            test rules /ops/prometheus_rules_test.yml
+      - name: Run tests
+        run: |
+          scripts/run_changed_tests.sh \
+            ${{ steps.diff.outputs.base }} \
+            ${{ steps.diff.outputs.head }}
+
+  gpu:
+    needs: unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - id: detect_gpu
+        run: |
+          if command -v nvidia-smi >/dev/null 2>&1; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.detect_gpu.outputs.available == 'true'
+        run: pip install -r requirements.txt -r requirements-ci.txt '.[gpu]'
+      - if: steps.detect_gpu.outputs.available == 'false'
+        run: pip install -r requirements.txt -r requirements-ci.txt
+      - run: |
+          if [ "${{ steps.detect_gpu.outputs.available }}" = "true" ]; then
+            PYTHONPATH=. pytest -m gpu -q
+          else
+            echo "GPU not available; skipping GPU tests" && exit 0
+          fi
+
+  heavy:
+    needs: unit
+    if: |
+      github.event_name == 'schedule' ||
+      github.ref == 'refs/heads/main' ||
+      github.event_name == 'deployment'
+    uses: ./.github/workflows/ci-heavy.yml
+
+  pipeline-e2e:
+    runs-on: ubuntu-latest
+    services:
+      neo4j:
+        image: neo4j:5
+        env:
+          NEO4J_AUTH: neo4j/neo4j
+        ports:
+          - 7474:7474
+          - 7687:7687
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: >-
+          pip install -r requirements.txt fakeredis requests python-dateutil
+          pydantic==2.4.0 rich scikit-learn watchdog PyYAML pytest geomloss boto3
+          httpx numpy
+      - run: PYTHONPATH=. pytest tests/e2e/test_pipeline_e2e.py -q
+  docker-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Set image name
+        run: |
+          echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+          echo "FRONTEND_IMAGE_NAME=${GITHUB_REPOSITORY,,}-frontend" >> $GITHUB_ENV
+      - uses: docker/build-push-action@v5
+        with:
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ghcr.io/${{ env.IMAGE_NAME }}:latest
+      - uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ghcr.io/${{ env.FRONTEND_IMAGE_NAME }}:latest
+  deploy:
+    needs: docker-build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          script: |
+            cd ${{ secrets.DEPLOY_PATH }}
+            docker compose pull
+            docker compose up -d
+      - name: Upload Grafana dashboard
+        run: python scripts/upload_dashboard.py
+        env:
+          GRAFANA_URL: ${{ secrets.GRAFANA_URL }}
+          GRAFANA_TOKEN: ${{ secrets.GRAFANA_TOKEN }}

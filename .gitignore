@@ -1,0 +1,15 @@
+venv
+.venv
+__pycache__
+*.pyc
+.env
+.DS_Store
+data/
+frontend/node_modules/
+frontend/dist/
+frontend/package-lock.json
+test_server.db
+coverage.xml
+.mypy_cache/
+datacreek.egg-info/
+.coverage

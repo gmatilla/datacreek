@@ -1,0 +1,67 @@
+repos:
+  - repo: local
+    hooks:
+      - id: black
+        name: black
+        entry: black
+        language: python
+        additional_dependencies: ["black==24.4.2"]
+        files: "\\.py$"
+      - id: isort
+        name: isort
+        entry: isort --profile black
+        language: python
+        additional_dependencies: ["isort==5.13.2"]
+        files: "\\.py$"
+      - id: flake8
+        name: flake8
+        entry: flake8
+        language: python
+        additional_dependencies: ["flake8==7.0.0", "flake8-bandit"]
+        files: "^(datacreek/analysis/|tests/property/)"
+        exclude: ""
+      - id: pydocstyle
+        name: pydocstyle
+        entry: pydocstyle
+        language: python
+        additional_dependencies: ["pydocstyle==6.3.0"]
+        files: "^schemas/"
+      - id: docstring-quality
+        name: docstring-quality
+        entry: python scripts/docstring_quality.py
+        language: python
+        additional_dependencies: ["interrogate==1.7.0"]
+        pass_filenames: false
+      - id: bandit
+        name: bandit
+        # ignore low‑severity rules that produce noisy alerts in our codebase:
+        #  - B101: `assert` used for sanity checks
+        #  - B110/B112: blank `except` blocks are purposeful fallbacks
+        #  - B404/B603/B607: benign subprocess usage
+        entry: bandit -x tests --skip B101,B110,B112,B404,B603,B607
+        language: python
+        additional_dependencies: ["bandit==1.7.8"]
+      - id: interrogate
+        name: interrogate
+        entry: >-
+          interrogate --fail-under=80 -e datacreek/api.py -e datacreek/db.py -e datacreek/pipelines.py -e datacreek/schemas.py -e datacreek/services.py -e datacreek/storage.py -e datacreek/tasks.py -e datacreek/config_models.py -e datacreek/utils datacreek
+        language: python
+        pass_filenames: false
+        additional_dependencies: ["interrogate==1.5.0", "setuptools"]
+      - id: radon-cc
+        name: radon cyclomatic complexity
+        entry: radon cc -s -n C datacreek
+        language: python
+        additional_dependencies: ["radon"]
+        pass_filenames: false
+      - id: lakefs-schema
+        name: lakefs schema compatibility
+        entry: python scripts/check_schema_break.py
+        language: python
+        files: "^\\.lakefs/schema\\.yaml$"
+        additional_dependencies: ["pyyaml"]
+      - id: template-sha
+        name: enforce template sha256 header
+        entry: python scripts/validate_template_sha.py
+        language: python
+        files: "^templates/.*\\.jinja$"

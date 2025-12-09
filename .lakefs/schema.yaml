@@ -1,0 +1,8 @@
+version: 1
+fields:
+  - name: id
+    type: string
+  - name: prompt
+    type: string
+  - name: completion
+    type: string

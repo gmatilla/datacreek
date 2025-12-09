@@ -1,0 +1,13 @@
+{
+  "schema": {
+    "type": "object",
+    "properties": {
+      "instruction": {"type": "string"},
+      "input": {"type": "string"},
+      "output": {"type": "string"}
+    },
+    "required": ["instruction", "output"]
+  },
+  "max_length": 4096,
+  "regex": "(?s)\\{.*\\}"
+}

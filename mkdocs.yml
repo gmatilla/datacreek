@@ -1,0 +1,8 @@
+site_name: Datacreek
+site_url: https://example.com
+theme:
+  name: material
+nav:
+  - Quick Start CPU: docs/quick-start-cpu.md
+  - Quick Start GPU: docs/quick-start-gpu.md
+  - API Guide: docs/api-guide.md

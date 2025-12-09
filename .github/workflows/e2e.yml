@@ -1,0 +1,24 @@
+name: "e2e"
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+
+jobs:
+  metrics-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: >-
+          pip install -r requirements.txt fakeredis requests python-dateutil
+          pydantic==2.4.0 rich watchdog PyYAML numpy prometheus_client jinja2
+      - run: >-
+          PYTHONPATH=. pytest -q
+          tests/test_fasttext_pool.py
+          tests/test_ttl_manager.py
+          tests/test_watchdog.py

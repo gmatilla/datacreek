@@ -1,0 +1,12 @@
+{
+  "schema": {
+    "type": "object",
+    "properties": {
+      "prompt": {"type": "string"},
+      "completion": {"type": "string"}
+    },
+    "required": ["prompt", "completion"]
+  },
+  "max_length": 4096,
+  "regex": "(?s)\\{.*\\}"
+}

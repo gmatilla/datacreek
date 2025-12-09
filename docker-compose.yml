@@ -1,0 +1,66 @@
+version: '3.8'
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  neo4j:
+    image: neo4j:5
+    environment:
+      - NEO4J_AUTH=neo4j/neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+
+  api:
+    build: .
+    image: ${IMAGE_NAME:-datacreek}
+    command: uvicorn datacreek.api:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - redis
+      - neo4j
+    ports:
+      - "8000:8000"
+
+  worker:
+    build: .
+    image: ${IMAGE_NAME:-datacreek}
+    command: celery -A datacreek.tasks worker --loglevel=info
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - redis
+
+  backend:
+    build: .
+    image: ${IMAGE_NAME:-datacreek}
+    command: python -m datacreek.server.app
+    env_file: .env
+    environment:
+      - PORT=5000
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - redis
+      - neo4j
+    ports:
+      - "5000:5000"
+
+  frontend:
+    build:
+      context: ./frontend
+    image: ${FRONTEND_IMAGE_NAME:-datacreek-frontend}
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
+volumes:
+  neo4j_data:

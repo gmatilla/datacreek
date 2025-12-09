@@ -1,0 +1,12 @@
+{
+  "schema": {
+    "type": "object",
+    "properties": {
+      "question": {"type": "string"},
+      "answer": {"type": "string"}
+    },
+    "required": ["question", "answer"]
+  },
+  "max_length": 1024,
+  "regex": "(?s)\\{.*\\}"
+}

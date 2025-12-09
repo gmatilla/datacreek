@@ -1,0 +1,182 @@
+{% extends 'base.html' %}
+
+{% block title %}Dataset {{ dataset.name }}{% endblock %}
+
+{% block extra_head %}
+<script src="https://unpkg.com/3d-force-graph@1.77.0/dist/3d-force-graph.min.js"></script>
+<style>#graph{height:600px}</style>
+{% endblock %}
+
+{% block content %}
+<h2>{{ dataset.name }}</h2>
+<ul class="nav nav-tabs" id="myTab" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="raw-tab" data-bs-toggle="tab" data-bs-target="#raw" type="button" role="tab">Donnée brute</button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="kg-tab" data-bs-toggle="tab" data-bs-target="#kg" type="button" role="tab">Knowledge Graph</button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="gen-tab" data-bs-toggle="tab" data-bs-target="#gen" type="button" role="tab">Génération</button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="cur-tab" data-bs-toggle="tab" data-bs-target="#cur" type="button" role="tab">Curation</button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="exp-tab" data-bs-toggle="tab" data-bs-target="#exp" type="button" role="tab">Exportation</button>
+  </li>
+</ul>
+<div class="tab-content mt-3">
+  <div class="tab-pane fade show active" id="raw" role="tabpanel">
+    <form class="mb-3" method="post" action="{{ url_for('dataset_ingest', name=dataset.name) }}">
+      <div class="mb-3">
+        <label for="inputPath" class="form-label">Path or URL</label>
+        <input type="text" class="form-control" id="inputPath" name="input_path" placeholder="/path/to/file or URL" required>
+      </div>
+      <div class="mb-3">
+        <label for="docId" class="form-label">Document ID (optional)</label>
+        <input type="text" class="form-control" id="docId" name="doc_id">
+      </div>
+      <button type="submit" class="btn btn-primary">Ingest</button>
+    </form>
+
+    {% if dataset.graph.graph.nodes %}
+    <h5>Documents</h5>
+    <ul>
+    {% for node, data in dataset.graph.graph.nodes(data=True) if data.type == 'document' %}
+      <li>{{ node }} ({{ dataset.graph.get_chunks_for_document(node)|length }} chunks)</li>
+    {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-muted">No documents yet.</p>
+    {% endif %}
+  </div>
+  <div class="tab-pane fade" id="kg" role="tabpanel">
+    <div class="mb-2">
+      <div class="input-group mb-2">
+        <input type="text" class="form-control" id="searchInput" placeholder="Search">
+        <button class="btn btn-outline-secondary" id="searchBtn">Search</button>
+      </div>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="checkbox" id="toggleDocs" checked>
+        <label class="form-check-label" for="toggleDocs">Documents</label>
+      </div>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="checkbox" id="toggleChunks" checked>
+        <label class="form-check-label" for="toggleChunks">Chunks</label>
+      </div>
+      <div id="sourceFilters" class="d-inline-block ms-2"></div>
+    </div>
+    <div class="row">
+      <div class="col-md-8">
+        <div id="graph" style="height: 600px;"></div>
+        <div class="mt-2">
+          <form class="d-inline" method="post" action="{{ url_for('save_dataset_neo4j', name=dataset.name) }}">
+            <button type="submit" class="btn btn-sm btn-secondary">Save to Neo4j</button>
+          </form>
+          <form class="d-inline" method="post" action="{{ url_for('load_dataset_neo4j', name=dataset.name) }}">
+            <button type="submit" class="btn btn-sm btn-secondary">Load from Neo4j</button>
+          </form>
+          <button id="resetView" class="btn btn-sm btn-secondary">Reset View</button>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <h6>Node Details</h6>
+        <pre id="nodeDetails" class="border p-2 small"></pre>
+      </div>
+    </div>
+  </div>
+  <div class="tab-pane fade" id="gen" role="tabpanel">
+    <p class="text-muted">Generation parameters placeholder.</p>
+  </div>
+  <div class="tab-pane fade" id="cur" role="tabpanel">
+    <p class="text-muted">Curation operations placeholder.</p>
+  </div>
+  <div class="tab-pane fade" id="exp" role="tabpanel">
+    <p class="text-muted">Export options placeholder.</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+const container = document.getElementById('graph');
+let Graph; let graphData;
+fetch("{{ url_for('dataset_graph', name=dataset.name) }}")
+  .then(res => res.json())
+  .then(data => {
+    graphData = data;
+    const DOC_COLOR = '#1f77b4';
+    const CHUNK_COLOR = '#ff7f0e';
+    const REL_COLORS = { has_chunk: '#999' };
+    Graph = ForceGraph3D()(container)
+      .graphData(data)
+      .nodeLabel(n => `${n.id} (${n.type})`)
+      .onNodeClick(node => {
+        document.getElementById('nodeDetails').textContent = JSON.stringify(node, null, 2);
+        const distance = 60;
+        const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z);
+        Graph.cameraPosition({x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio}, node, 1000);
+      })
+      .linkColor(l => REL_COLORS[l.relation] || '#666');
+
+    const sources = [...new Set(data.nodes.map(n => n.source).filter(Boolean))];
+    const srcContainer = document.getElementById('sourceFilters');
+    sources.forEach(src => {
+      const id = 'src_' + src.replace(/[^a-zA-Z0-9]/g, '_');
+      srcContainer.insertAdjacentHTML('beforeend',
+        `<div class="form-check form-check-inline"><input class="form-check-input source-toggle" type="checkbox" id="${id}" data-src="${src}" checked><label class="form-check-label" for="${id}">${src}</label></div>`
+      );
+    });
+    srcContainer.addEventListener('change', applyFilters);
+
+    function applyFilters() {
+      const showDocs = document.getElementById('toggleDocs').checked;
+      const showChunks = document.getElementById('toggleChunks').checked;
+      const allowedSources = Array.from(document.querySelectorAll('.source-toggle:checked')).map(el => el.dataset.src);
+      Graph
+        .nodeColor(node => {
+          if (!allowedSources.includes(node.source)) return '#ccc';
+          if (node.type === 'document' && !showDocs) return '#ccc';
+          if (node.type === 'chunk' && !showChunks) return '#ccc';
+          return node.type === 'document' ? DOC_COLOR : CHUNK_COLOR;
+        })
+        .linkColor(link => {
+          const s = typeof link.source === 'object' ? link.source : graphData.nodes.find(n => n.id === link.source);
+          const t = typeof link.target === 'object' ? link.target : graphData.nodes.find(n => n.id === link.target);
+          if (!allowedSources.includes(s.source) || !allowedSources.includes(t.source)) return '#ccc';
+          const sType = s.type; const tType = t.type;
+          if ((sType === 'document' && !showDocs) || (sType === 'chunk' && !showChunks) ||
+              (tType === 'document' && !showDocs) || (tType === 'chunk' && !showChunks)) {
+            return '#ccc';
+          }
+          return REL_COLORS[link.relation] || '#666';
+        });
+    }
+
+    applyFilters();
+    document.getElementById('toggleDocs').addEventListener('change', applyFilters);
+    document.getElementById('toggleChunks').addEventListener('change', applyFilters);
+    document.getElementById('resetView').addEventListener('click', () => { Graph.zoomToFit(400); document.getElementById('nodeDetails').textContent = ''; });
+    document.getElementById('searchBtn').addEventListener('click', () => {
+      const q = document.getElementById('searchInput').value.trim();
+      if (!q) return;
+      fetch(`{{ url_for('dataset_search', name=dataset.name) }}?q=` + encodeURIComponent(q))
+        .then(res => res.json())
+        .then(ids => {
+          const showDocs = document.getElementById('toggleDocs').checked;
+          const showChunks = document.getElementById('toggleChunks').checked;
+          const allowedSources = Array.from(document.querySelectorAll('.source-toggle:checked')).map(el => el.dataset.src);
+          Graph.nodeColor(node => {
+            if (ids.includes(node.id)) return '#e41a1c';
+            if (!allowedSources.includes(node.source)) return '#ccc';
+            if (node.type === 'document' && !showDocs) return '#ccc';
+            if (node.type === 'chunk' && !showChunks) return '#ccc';
+            return node.type === 'document' ? DOC_COLOR : CHUNK_COLOR;
+          });
+        });
+    });
+  });
+</script>
+{% endblock %}

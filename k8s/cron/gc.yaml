@@ -1,0 +1,18 @@
+# CronJob to garbage-collect old checkpoints and keep cluster storage usage under control
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: checkpoint-gc
+spec:
+  # Runs once per day at midnight
+  schedule: "@daily"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: gc
+              image: datacreek/cron:latest
+              # Execute the checkpoint cleanup script
+              command: ["python", "/app/cleanup_checkpoints.py"]
+          restartPolicy: OnFailure

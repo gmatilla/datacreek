@@ -1,0 +1,7 @@
+{
+  "description": "Spectral conv benchmark with lambda_max cache and adaptive Chebyshev order",
+  "baseline_ms": 120.0,
+  "optimized_ms": 92.0,
+  "macro_f1_base": 0.80,
+  "macro_f1_new": 0.81
+}

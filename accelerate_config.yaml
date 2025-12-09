@@ -1,0 +1,15 @@
+# Accelerate configuration enabling DeepSpeed ZeRO-3 optimization.
+# gradient_accumulation_steps should be set via compute_gradient_accumulation_steps()
+# depending on the batch size and available GPU memory.
+compute_environment: LOCAL_MACHINE
+distributed_type: DEEPSPEED
+device_num: 1
+device_ids: 0
+device_count: 1
+device_map: null
+deepspeed_config:
+  zero_stage: 3
+  bf16:
+    enabled: true
+mixed_precision: bf16
+gradient_accumulation_steps: 1

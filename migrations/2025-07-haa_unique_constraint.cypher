@@ -1,0 +1,3 @@
+CREATE CONSTRAINT haa_pair_unique IF NOT EXISTS
+FOR ()-[r:SUGGESTED_HYPER_AA]-()
+REQUIRE (r.startNodeId, r.endNodeId) IS UNIQUE;

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Explainability Demo</title>
+  <script type="module">
+    import * as Plot from 'https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6/+esm';
+    async function main() {
+      const params = new URLSearchParams(location.search);
+      const dataset = params.get('dataset') || 'demo';
+      const node = params.get('node');
+      if (!node) return;
+      const res = await fetch(`/api/explain/${node}?dataset=${dataset}`);
+      const data = await res.json();
+      const nodes = data.nodes;
+      const edges = data.edges.map(([s, t]) => ({
+        s,
+        t,
+        v: data.attention[`${s}->${t}`] || 0
+      }));
+      const coords = new Map();
+      const R = 0.9;
+      nodes.forEach((n, i) => {
+        const a = (2 * Math.PI * i) / nodes.length;
+        coords.set(n, { x: R * Math.cos(a), y: R * Math.sin(a) });
+      });
+      const plot = Plot.plot({
+        x: { domain: [-1, 1] },
+        y: { domain: [-1, 1] },
+        marks: [
+          Plot.link(edges, {
+            x1: d => coords.get(d.s).x,
+            y1: d => coords.get(d.s).y,
+            x2: d => coords.get(d.t).x,
+            y2: d => coords.get(d.t).y,
+            stroke: d => Plot.interpolateTurbo(d.v),
+            strokeWidth: 2
+          }),
+          Plot.dot(nodes.map(n => coords.get(n)), { r: 4, stroke: 'black' })
+        ]
+      });
+      document.body.append(plot);
+    }
+    main();
+  </script>
+</head>
+<body></body>
+</html>

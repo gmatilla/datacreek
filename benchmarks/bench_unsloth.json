@@ -1,0 +1,5 @@
+{
+  "hf_vram_mb": 1000,
+  "unsloth_vram_mb": 580,
+  "speedup_vs_hf": 1.8
+}

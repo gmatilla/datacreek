@@ -1,0 +1,63 @@
+rule_files:
+  - prometheus_rules.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'p95_graphwave_ms'
+        values: '0 260 260 260 260 260 260 260 260 260 260 260'
+    alert_rule_test:
+      - alertname: GraphwaveP95Slow
+        eval_time: 11m
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations: {}
+  - interval: 1m
+    input_series:
+      - series: 'ingest_queue_fill_ratio'
+        values: '0 0.9 0.9 0.9 0.9 0.9 0.9 0.9 0.9 0.9 0.9 0.9'
+    alert_rule_test:
+      - alertname: IngestQueueHigh
+        eval_time: 11m
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations: {}
+  - interval: 1m
+    input_series:
+      - series: 'ingest_latency_p999'
+        # start high latency at 1m so the 15m window elapses by 16m
+        values: '0 6 6 6 6 6 6 6 6 6 6 6 6 6 6 6 6 6 6'
+    alert_rule_test:
+      - alertname: IngestLatencyP999High
+        eval_time: 16m
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations: {}
+  - interval: 1m
+    input_series:
+      - series: 'ingest_latency_burn_rate_1h'
+        values: '0 1.2 1.2 1.2 1.2 1.2 1.2 1.2 1.2 1.2 1.2 1.2'
+      - series: 'ingest_latency_burn_rate_6h'
+        values: '0 1.2 1.2 1.2 1.2 1.2 1.2 1.2 1.2 1.2 1.2 1.2'
+    alert_rule_test:
+      - alertname: IngestLatencyBurnRate
+        eval_time: 11m
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations: {}
+  - interval: 1m
+    input_series:
+      - series: 'sheaf_hyper_coherence'
+        values: '1 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4 0.4'
+    alert_rule_test:
+      - alertname: SheafHyperCoherenceLow
+        eval_time: 16m
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Coherence spectrale sheaf-hypergraph < 0.5"

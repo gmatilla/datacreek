@@ -1,0 +1,74 @@
+groups:
+  - name: datacreek.rules
+    rules:
+      - record: redis_low_hit_ratio_threshold
+        expr: 0.3
+      - record: eigsh_timeout_storm_threshold
+        expr: 5
+      - record: eigsh_timeout_critical_threshold
+        expr: 2
+      - alert: EigshTimeoutStorm
+        expr: increase(eigsh_timeouts_total[30m]) > eigsh_timeout_storm_threshold
+        for: 10m
+        labels:
+          severity: warning
+      - alert: SVGPJitterStorm
+        expr: rate(gp_jitter_restarts_total[10m]) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+      - alert: RedisLowHitRatio
+        expr: redis_hit_ratio < redis_low_hit_ratio_threshold
+        for: 5m
+        labels:
+          severity: warning
+      - alert: EigshTimeoutCritical
+        expr: increase(eigsh_timeouts_total[1h]) > eigsh_timeout_critical_threshold
+        for: 1m
+        labels:
+          severity: critical
+      - alert: CachePressure
+        expr: ingest_queue_fill_ratio > 0.9 and redis_hit_ratio < redis_low_hit_ratio_threshold
+        for: 5m
+        labels:
+          severity: critical
+      - alert: GraphwaveP95Slow
+        expr: p95_graphwave_ms > 250
+        for: 10m
+        labels:
+          severity: warning
+      - alert: IngestQueueHigh
+        expr: ingest_queue_fill_ratio > 0.8
+        for: 10m
+        labels:
+          severity: critical
+      - alert: IngestLatencyP999High
+        expr: ingest_latency_p999 > 5
+        for: 15m
+        labels:
+          severity: critical
+      - alert: IngestLatencyBurnRate
+        expr: ingest_latency_burn_rate_1h > 1 and ingest_latency_burn_rate_6h > 1
+        for: 10m
+        labels:
+          severity: critical
+      # Alert if spectral coherence between the sheaf and hypergraph drops
+      # below an acceptable 0.5 threshold for a sustained period.
+      - alert: SheafHyperCoherenceLow
+        expr: sheaf_hyper_coherence < 0.5
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Coherence spectrale sheaf-hypergraph < 0.5"
+      - alert: EmbeddingDrift
+        expr: embedding_mmd > 0.1
+        for: 24h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Embedding drift detected (MMD > 0.1 for 24h)"
+      - record: ingest_latency_burn_rate_1h
+        expr: avg_over_time(ingest_latency_p999[1h]) / 5
+      - record: ingest_latency_burn_rate_6h
+        expr: avg_over_time(ingest_latency_p999[6h]) / 5

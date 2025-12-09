@@ -1,0 +1,12 @@
+route:
+  receiver: default
+  group_by: ['alertname']
+  group_wait: 30s
+  routes:
+    - receiver: default
+inhibit_rules:
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal: ['alertname']

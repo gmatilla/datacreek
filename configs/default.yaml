@@ -1,0 +1,81 @@
+ingest:
+  # Language codes used by pytesseract OCR fallback
+  ocr_lang: "fra+eng"
+  chunk_size: 512
+  chunk_overlap: 64
+cleanup:
+  tau: 5           # triangle threshold
+  sigma: 0.95      # node similarity threshold
+  k_min: 5         # min component size
+  lp_sigma: 0.3    # Hyper-AA score threshold
+  lp_topk: 50
+  hub_deg: 1000    # hub tagging degree threshold
+watcher:
+  enabled: true
+tpl:
+  eps_w1: 0.05     # Wasserstein-1 cutoff
+  rnn_size: 128    # GraphRNN-Lite subgraph size
+  rnn_ckpt_bucket: datacreek-models
+  rnn_ckpt_key: graphrnn.pt
+  rnn_ckpt_sha: sample-sha
+sheaf:
+  lam_thresh: 1e-3 # eigenvalue threshold
+spectral:
+  eig_maxit: 2000
+  eig_timeout: 60
+embeddings:
+  node2vec:
+    p: 1.0
+    q: 2.0
+    d: 128
+  product_alpha: 0.6
+score:
+  gamma: 0.6
+  eta: 0.3
+ib:
+  beta: 0.01
+penalty:
+  lambda_sigma: 10 # fractal sigma penalty
+  lambda_cov: 5    # coverage fraction penalty
+  w_rec: 5         # recall penalty weight
+  w_lat: 3         # FAISS latency penalty weight
+
+fractal:
+  bootstrap_seed: 42
+
+cache:
+  l1_ttl_init: 3600
+  l1_ttl_min: 300
+  l1_ttl_max: 7200
+  l2_max_size_mb: 2048
+  l2_ttl_hours: 24
+  ttl_pid:
+    target_hit_ratio: 0.8
+    Kp: 500.0
+    Ki: 0.05
+    I_max: 3600
+
+ann:
+  backend: faiss_gpu_ivfpq
+
+language:
+  min_confidence: 0.7
+
+compression:
+  magnitude: 0.03  # pruning threshold
+
+monitor:
+  port: 8000       # Prometheus metrics port
+neo4j:
+  run_migrations: true
+
+gpu:
+  enabled: false
+
+# PID controller defaults
+pid:
+  target_hit_ratio: 0.45
+  Kp: 0.4
+  Ki: 0.05
+  I_max: 5
+

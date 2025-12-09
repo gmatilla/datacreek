@@ -1,0 +1,4 @@
+[run]
+omit =
+    datacreek/server/*
+    datacreek/build_dataset.py

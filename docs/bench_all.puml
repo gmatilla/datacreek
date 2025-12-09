@@ -1,0 +1,14 @@
+@startuml
+!define RECTANGLE class
+actor User
+
+RECTANGLE bench_all
+User -> bench_all : run script
+bench_all -> "ann_benchmark" : measure recall
+bench_all -> "psutil" : CPU/memory
+bench_all -> "faiss" : GPU count
+bench_all -> "backpressure" : ingest rate
+bench_all -> "graphwave_cuda" : GraphWave/s
+bench_all -> "whisper_batch" : xRT
+bench_all -> "TTLManager" : PID converge
+@enduml

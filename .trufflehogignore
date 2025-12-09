@@ -1,0 +1,5 @@
+configs/default.yaml
+.trufflehogignore
+regex:sample-sha
+regex:[0-9a-f]{64}
+regex:6a5085cb9eb06cc6cfb4058a52c57d205c3bd6cc2f8b0501f2cae9d2c7bd3a47

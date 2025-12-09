@@ -1,0 +1,36 @@
+name: heavy-tests
+on:
+  workflow_call:
+
+jobs:
+  heavy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: ankane/pgvector:latest
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: pip install -r requirements.txt -r requirements-ci.txt pytest
+      - name: Run heavy tests
+        env:
+          PGVECTOR_URL: postgresql://postgres:test@localhost:5432/postgres
+          HYBRID_FULL_BENCH: "1"
+        run: PYTHONPATH=. pytest -m heavy -q
+      - name: Prometheus rules
+        run: >-
+          docker run --rm -v ${{ github.workspace }}/ops:/ops \
+            --entrypoint=promtool quay.io/prometheus/prometheus:latest \
+            check rules /ops/prometheus_rules.yml
+      - name: Prometheus rule tests
+        run: >-
+          docker run --rm -v ${{ github.workspace }}/ops:/ops \
+            --entrypoint=promtool quay.io/prometheus/prometheus:latest \
+            test rules /ops/prometheus_rules_test.yml

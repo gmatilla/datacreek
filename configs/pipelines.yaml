@@ -1,0 +1,42 @@
+# Default pipeline configuration
+# Each key is a dataset type and defines steps and compatible trainings
+qa:
+  steps: [ingest, to_kg, kg_cleanup, generate_qa, curate, save]
+  trainings: [sft, dpo, orpo, dpo_sft, ppo, rrhf, rlaif, grpo]
+  description: "Question-answer pairs for instruction tuning and preference based training."
+cot:
+  steps: [ingest, to_kg, kg_cleanup, generate_cot, curate, save]
+  trainings: [sft, dpo, orpo, dpo_sft, rrhf]
+  description: "Chain-of-thought traces to teach stepwise reasoning."
+vqa:
+  steps: [ingest, to_kg, kg_cleanup, generate_vqa, curate, save]
+  trainings: [sft]
+  description: "Visual question answering pairs."
+text:
+  steps: [ingest, to_kg, save]
+  trainings: [cpt]
+  description: "Raw text corpus for continual pre-training."
+kg:
+  steps: [ingest, to_kg, kg_cleanup, generate_from_kg, curate, save]
+  trainings: [sft, dpo, orpo, dpo_sft, ppo, rrhf, rlaif, grpo]
+  description: "Question answering data generated from a knowledge graph."
+pref_pair:
+  steps: [ingest, to_kg, kg_cleanup, generate_candidates, label_pairs, save]
+  trainings: [ppo, dpo, orpo, dpo_sft, rlaif]
+  description: "Pairwise preferences for reward-model and preference-based training."
+pref_list:
+  steps: [ingest, to_kg, kg_cleanup, generate_candidates, rank_responses, save]
+  trainings: [grpo, rrhf]
+  description: "Listwise ranked responses for GRPO or RRHF."
+tool:
+  steps: [ingest, to_kg, kg_cleanup, generate_tool_call, curate, save]
+  trainings: [sft, dpo, orpo, dpo_sft, ppo, rrhf, rlaif, grpo]
+  description: "Single tool-calling demonstrations with integrated results."
+conversation:
+  steps: [ingest, to_kg, kg_cleanup, generate_conversation, curate, save]
+  trainings: [sft, dpo, orpo, dpo_sft, ppo, rrhf, rlaif, grpo]
+  description: "Multi-turn conversations for dialogue training."
+multi_tool:
+  steps: [ingest, to_kg, kg_cleanup, generate_multi_tool, curate, save]
+  trainings: [sft, dpo, orpo, dpo_sft, ppo, rrhf, rlaif, grpo]
+  description: "Sequential multi-tool use traces for complex tasks."

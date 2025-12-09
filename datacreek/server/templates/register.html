@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% block title %}Register{% endblock %}
+{% block content %}
+<h2>Register</h2>
+{% if api_key %}
+  <div class="alert alert-success">
+    Your account has been created. Save this API key:
+    <code>{{ api_key }}</code>
+  </div>
+  <a href="{{ url_for('login') }}" class="btn btn-primary">Login</a>
+{% else %}
+  <form method="post">
+    {{ form.hidden_tag() }}
+    <div class="mb-3">
+      {{ form.username.label }} {{ form.username(class='form-control') }}
+    </div>
+    <div class="mb-3">
+      {{ form.password.label }} {{ form.password(class='form-control') }}
+    </div>
+    {{ form.submit(class='btn btn-primary') }}
+  </form>
+{% endif %}
+{% endblock %}

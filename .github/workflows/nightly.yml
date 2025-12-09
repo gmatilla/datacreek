@@ -1,0 +1,8 @@
+name: heavy-nightly
+on:
+  schedule:
+    - cron: '0 2 * * *'
+jobs:
+  heavy:
+    uses: ./.github/workflows/ci-heavy.yml
+

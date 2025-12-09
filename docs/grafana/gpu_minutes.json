@@ -1,0 +1,20 @@
+{
+  "annotations": {"list": []},
+  "schemaVersion": 36,
+  "refresh": "5s",
+  "title": "GPU Minutes",
+  "panels": [
+    {
+      "type": "graph",
+      "title": "GPU Minutes per Tenant",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(rate(gpu_minutes_total[5m])) by (tenant)",
+          "legendFormat": "{{tenant}}"
+        }
+      ],
+      "lines": true
+    }
+  ]
+}
