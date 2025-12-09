@@ -148,11 +148,11 @@ jobs:
         run: |
           echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
           echo "FRONTEND_IMAGE_NAME=${GITHUB_REPOSITORY,,}-frontend" >> $GITHUB_ENV
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v6
         with:
           push: ${{ github.ref == 'refs/heads/main' }}
           tags: ghcr.io/${{ env.IMAGE_NAME }}:latest
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v6
         with:
           context: ./frontend
           push: ${{ github.ref == 'refs/heads/main' }}
