@@ -9,7 +9,7 @@ INSTALL_REQUIRES = [
     "redis==5.0.4",
     "fakeredis==2.30.0",
     "neo4j==5.17.0",
-    "boto3==1.34.0",
+    "boto3==1.42.9",
     "gudhi==3.9.0",
     "numpy==1.26.0",
     "pillow==11.0.0",
