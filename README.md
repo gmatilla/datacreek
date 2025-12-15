@@ -9,7 +9,7 @@ Tool for generating high-quality synthetic datasets to fine-tune LLMs.
 
 Generate reasoning traces and QA pairs and save them to common fine-tuning formats.
 
-> [Checkout our guide on using the tool to unlock task-specific reasoning in Llama-3 family](https://github.com/meta-llama/datacreek/tree/main/use-cases/adding_reasoning_to_llama_3)
+> [Checkout our guide on using the tool to unlock task-specific reasoning in Llama-3 family](https://github.com/gmatilla/datacreek/tree/main/use-cases/adding_reasoning_to_llama_3)
 
 # What does Datacreek offer? 
 
@@ -257,7 +257,7 @@ Create a dedicated environment and install the project dependencies:
 ```bash
 conda create -n synthetic-data python=3.10
 conda activate synthetic-data
-git clone https://github.com/meta-llama/datacreek.git
+git clone https://github.com/gmatilla/datacreek.git
 cd datacreek
 python -m venv .venv
 source .venv/bin/activate
@@ -270,6 +270,43 @@ additional dependencies:
 ```bash
 pip install quantulum3 pint
 ```
+
+#### Windows installation notes
+
+Installing the optional audio stack on Windows requires a working C/C++ toolchain
+so `webrtcvad` can compile native extensions. Use either Visual Studio or the
+standalone Build Tools before running `pip install`:
+
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools --source winget
+# In the installer select "Desktop development with C++" and the Windows SDK
+```
+
+Open a "x64 Native Tools" developer prompt (or run `vcvarsall.bat amd64`) so the
+compiler is on PATH, then upgrade the packaging toolchain and install the base
+dependencies:
+
+```powershell
+python -m pip install --upgrade pip setuptools wheel
+pip install -r requirements.txt --progress-bar off
+```
+
+If the previous command times out because of the large dependency set, install
+the package plus extras in smaller batches from the repository root:
+
+```powershell
+pip install -e .
+pip install .[vision]
+pip install .[audio]      # installs webrtcvad once the Build Tools above are available
+pip install .[ingest]
+pip install .[neo4j]
+pip install .[gpu]        # optional, requires CUDA capable hardware
+```
+
+Each extras install reuses wheels downloaded in prior steps, which keeps the
+network usage low and avoids re-starting the full dependency graph when a
+download hiccups. The `.audio` extra pulls `webrtcvad`, so failures are usually
+resolved by ensuring the Build Tools step above completed successfully.
 
 ### CI setup
 
@@ -302,7 +339,7 @@ start the server as shown below:
 ```bash
 # Start vLLM server
 # Note you will need to grab your HF Authentication from: https://huggingface.co/settings/tokens
-vllm serve meta-llama/Llama-3.3-70B-Instruct --port 8000
+vllm serve gmatilla/Llama-3.3-70B-Instruct --port 8000
 ```
 
 ### 2. Usage
@@ -407,11 +444,16 @@ graph TD
 
 ## Configuration
 
-The toolkit uses a YAML configuration file (default: `configs/config.yaml`).
-Database connection settings can be provided either through the
-`DATABASE_URL` environment variable or a `database.url` entry in the YAML
-file. By default a local SQLite file `datacreek.db` is used, but you can
-point this to any SQLAlchemy compatible database.
+Datacreek loads a YAML configuration file by first checking the
+`DATACREEK_CONFIG` environment variable, then `datacreek/default.yaml` (when
+packaged), and finally `configs/default.yaml`. The `configs/default.yaml` file
+is the canonical runtime configuration; it defines ingestion, caching,
+watcher, and metric defaults used by the workers and API. The lighter
+`datacreek/config.yaml` remains available as a sample for the CLI-facing LLM
+generators, but the values that drive the service should be kept in sync with
+`configs/default.yaml` when you need to override defaults. Database
+connection settings can still be provided via `DATABASE_URL` or by adding a
+`database.url` entry to the YAML file.
 
 ### Database initialization
 
@@ -427,7 +469,7 @@ Use the source tree directly when hacking on the project. Install the
 dependencies from `requirements.txt`:
 
 ```bash
-git clone https://github.com/meta-llama/datacreek.git
+git clone https://github.com/gmatilla/datacreek.git
 cd datacreek
 python -m venv .venv
 source .venv/bin/activate
@@ -442,6 +484,13 @@ cd frontend
 npm install
 npm run dev
 ```
+
+### Checkpoint garbage collection cron
+
+The CronJob in `k8s/cron/gc.yaml` relies on the `datacreek/cron` image that
+runs `cron/cleanup_checkpoints.py`. Keep the script inside `/app/cleanup_checkpoints.py`
+by building the helper image via `docker build -f cron/Dockerfile -t datacreek/cron:latest .`
+and pushing it to the registry you deploy from before enabling the job.
 
 This will watch for file changes and serve the interface on
 `http://localhost:5173` while the API runs on port 8000.
@@ -521,7 +570,7 @@ llm:
 
 vllm:
   api_base: "http://localhost:8000/v1"
-  model: "meta-llama/Llama-3.3-70B-Instruct"
+  model: "gmatilla/Llama-3.3-70B-Instruct"
 
 generation:
   temperature: 0.7
@@ -570,7 +619,7 @@ Most options can also be overridden with environment variables. For example set
 | `SDK_BATCH_SIZE` | Override batch size for curate command | Config setting | `export SDK_BATCH_SIZE=1` |
 | `LLM_PROVIDER` | Choose underlying LLM provider | – | `export LLM_PROVIDER=vllm` |
 | `LLM_API_BASE` | Base URL for the LLM API | – | `export LLM_API_BASE=http://localhost:8000/v1` |
-| `LLM_MODEL` | Model name for LLM calls | – | `export LLM_MODEL=meta-llama/Llama-3.3-70B-Instruct` |
+| `LLM_MODEL` | Model name for LLM calls | – | `export LLM_MODEL=gmatilla/Llama-3.3-70B-Instruct` |
 | `LLM_MAX_RETRIES` | Max retries for LLM requests | `3` | `export LLM_MAX_RETRIES=5` |
 | `LLM_RETRY_DELAY` | Delay between retries | `1.0` | `export LLM_RETRY_DELAY=2` |
 | `API_ENDPOINT_KEY` | API key for external provider | – | `export API_ENDPOINT_KEY=sk-abc` |
@@ -627,7 +676,7 @@ models:
   local-llama:
     provider: vllm
     api_base: "http://localhost:8000/v1"
-    model: "meta-llama/Llama-3.3-70B-Instruct"
+    model: "gmatilla/Llama-3.3-70B-Instruct"
   llama-api:
     provider: api-endpoint
     api_base: "https://api.llama.com/v1"
@@ -1060,4 +1109,3 @@ Read more about the [License](./LICENSE)
 ## Contributing
 
 Contributions are welcome! [Read our contributing guide](./CONTRIBUTING.md)
-

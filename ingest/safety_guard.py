@@ -14,6 +14,7 @@ where :math:`s_{tox}` is the toxicity score from the transformer model and
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Optional
 
@@ -51,23 +52,44 @@ if Counter is not None:
 else:  # pragma: no cover - metrics disabled
     INGEST_TOXIC_BLOCKS = None
 
+LOGGER = logging.getLogger(__name__)
+
 # Lazy loaded models
 _TOXICITY_PIPE = None
 _CLIP_MODEL = None
 _CLIP_PROCESSOR = None
 
+_TOXICITY_WARNED = False
+_CLIP_WARNED = False
+
 
 def _load_toxicity() -> None:
     """Load the text toxicity pipeline if available."""
-    global _TOXICITY_PIPE
-    if _TOXICITY_PIPE is None and pipeline is not None:
+    global _TOXICITY_PIPE, _TOXICITY_WARNED
+    if _TOXICITY_PIPE is None:
+        if pipeline is None:
+            if not _TOXICITY_WARNED:
+                LOGGER.warning(
+                    "transformers pipeline unavailable (%s); toxicity scoring disabled",
+                    _TOX_MODEL_ID,
+                )
+                _TOXICITY_WARNED = True
+            return
         _TOXICITY_PIPE = pipeline("text-classification", model=_TOX_MODEL_ID)
 
 
 def _load_clip() -> None:
     """Load CLIP model and processor for NSFW scoring."""
-    global _CLIP_MODEL, _CLIP_PROCESSOR
-    if _CLIP_MODEL is None and CLIPModel is not None and CLIPProcessor is not None:
+    global _CLIP_MODEL, _CLIP_PROCESSOR, _CLIP_WARNED
+    if _CLIP_MODEL is None or _CLIP_PROCESSOR is None:
+        if CLIPModel is None or CLIPProcessor is None:
+            if not _CLIP_WARNED:
+                LOGGER.warning(
+                    "CLIP dependencies unavailable; NSFW scoring skipped (%s)",
+                    _CLIP_MODEL_ID,
+                )
+                _CLIP_WARNED = True
+            return
         _CLIP_MODEL = CLIPModel.from_pretrained(_CLIP_MODEL_ID)
         _CLIP_PROCESSOR = CLIPProcessor.from_pretrained(_CLIP_MODEL_ID)
 

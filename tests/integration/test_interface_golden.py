@@ -6,17 +6,7 @@ from pathlib import Path
 import networkx as nx
 import numpy as np
 
-spec = importlib.util.spec_from_file_location(
-    "chebdiag",
-    Path(__file__).resolve().parents[1]
-    / "datacreek"
-    / "analysis"
-    / "chebyshev_diag.py",
-)
-chebdiag = importlib.util.module_from_spec(spec)
-assert isinstance(spec.loader, importlib.abc.Loader)
-spec.loader.exec_module(chebdiag)
-chebyshev_diag_hutchpp = chebdiag.chebyshev_diag_hutchpp
+from datacreek.analysis.chebyshev_diag import chebyshev_diag_hutchpp
 
 
 def test_chebyshev_diag_golden():

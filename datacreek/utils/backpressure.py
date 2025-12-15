@@ -10,6 +10,10 @@ import time
 
 from datacreek.analysis import monitoring
 
+import logging
+
+LOGGER = logging.getLogger(__name__)
+
 __all__ = [
     "has_capacity",
     "acquire_slot",
@@ -22,6 +26,8 @@ __all__ = [
 _limit = int(os.getenv("INGEST_QUEUE_LIMIT", "10000"))
 _queue: asyncio.Queue[None] = asyncio.Queue(maxsize=_limit)
 _lock = threading.Lock()
+_SPOOL_STATUS: dict[str, bool] = {}
+_SPOOL_STATUS: dict[str, bool] = {}
 
 
 def _update_metric() -> None:
@@ -33,6 +39,26 @@ def _update_metric() -> None:
         )
     except Exception:  # pragma: no cover - metrics optional
         pass
+
+
+def _ensure_spool_dir(path: str) -> bool:
+    """Validate that ``path`` can be used for spooling failed requests."""
+
+    if not path:
+        return False
+    status = _SPOOL_STATUS.get(path)
+    if status is False:
+        return False
+    if status is True:
+        return True
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError as exc:
+        LOGGER.warning("Cannot create spool directory %s: %s", path, exc)
+        _SPOOL_STATUS[path] = False
+        return False
+    _SPOOL_STATUS[path] = True
+    return True
 
 
 def set_limit(limit: int) -> None:
@@ -91,13 +117,16 @@ def acquire_slot_with_backoff(
         time.sleep(delay)
 
     if spool_dir:
-        os.makedirs(spool_dir, exist_ok=True)
+        if not _ensure_spool_dir(spool_dir):
+            LOGGER.warning("Cannot create spool directory %s; dropping task", spool_dir)
+            return False
         ts = int(time.time() * 1000)
         path = os.path.join(spool_dir, f"spool_{ts}.json")
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(spool_data or {}, f)
         except Exception:
+            LOGGER.exception("Failed to write spool entry %s", path)
             pass
     return False
 

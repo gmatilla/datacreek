@@ -87,7 +87,7 @@ from datacreek.utils import extract_facts as extract_facts_func
 from datacreek.utils import lakefs_commit
 from datacreek.utils.config import load_config_with_overrides
 from datacreek.utils.neo4j_breaker import CircuitBreakerError, neo4j_breaker
-from schemas import AudioIngest, BaseIngest, ImageIngest, PdfIngest
+from datacreek.ingest_schemas import AudioIngest, BaseIngest, ImageIngest, PdfIngest
 
 CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "memory://")
 CELERY_BACKEND_URL = os.environ.get("CELERY_RESULT_BACKEND", "cache+memory://")
@@ -171,7 +171,6 @@ def _record_error(
 
 @celery_app.task
 def ingest_task(  # pragma: no cover - heavy
-    user_id: int,
     path: str,
     *,
     high_res: bool = False,
@@ -188,7 +187,6 @@ def ingest_task(  # pragma: no cover - heavy
         facts = extract_facts_func(content) if extract_facts else None
         src = create_source(
             db,
-            user_id,
             path,
             content,
             entities=ents,
@@ -199,7 +197,6 @@ def ingest_task(  # pragma: no cover - heavy
 
 @celery_app.task
 def generate_task(  # pragma: no cover - heavy
-    user_id: int,
     src_id: int,
     content_type: str,
     num_pairs: int | None,
@@ -214,7 +211,7 @@ def generate_task(  # pragma: no cover - heavy
 ) -> dict:
     with SessionLocal() as db:
         src = db.get(SourceData, src_id)
-        if not src or src.owner_id != user_id:
+        if not src:
             raise RuntimeError("Source not found")
         from datacreek.utils.config import load_config_with_overrides
 
@@ -240,17 +237,17 @@ def generate_task(  # pragma: no cover - heavy
             document_text=src.content,
             config_overrides=overrides if overrides else None,
         )
-        ds = create_dataset(db, user_id, src_id, content=json.dumps(out))
+        ds = create_dataset(db, src_id, content=json.dumps(out))
         return {"id": ds.id}
 
 
 @celery_app.task
 def curate_task(
-    user_id: int, ds_id: int, threshold: float | None
+    ds_id: int, threshold: float | None
 ) -> dict:  # pragma: no cover - heavy
     with SessionLocal() as db:
         ds = db.get(Dataset, ds_id)
-        if not ds or ds.owner_id != user_id:
+        if not ds:
             raise RuntimeError("Dataset not found")
         data = json.loads(ds.content or "{}")
         result = curate_qa_pairs(
@@ -264,11 +261,11 @@ def curate_task(
 
 @celery_app.task
 def save_task(
-    user_id: int, ds_id: int, fmt: ExportFormat
+    ds_id: int, fmt: ExportFormat
 ) -> dict:  # pragma: no cover - heavy
     with SessionLocal() as db:
         ds = db.get(Dataset, ds_id)
-        if not ds or ds.owner_id != user_id:
+        if not ds:
             raise RuntimeError("Dataset not found")
         data = json.loads(ds.content or "{}")
         if isinstance(fmt, str):
@@ -282,7 +279,7 @@ def save_task(
 
 @celery_app.task
 def dataset_ingest_task(  # pragma: no cover - heavy
-    name: DatasetName, path: str, user_id: int | None = None, **kwargs
+    name: DatasetName, path: str, **kwargs
 ) -> dict:
     """Ingest a file into a persisted dataset."""
     if not backpressure.acquire_slot_with_backoff(
@@ -293,7 +290,7 @@ def dataset_ingest_task(  # pragma: no cover - heavy
     ):
         raise RuntimeError("ingest queue full")
     client = get_redis_client()
-    tenant_id = str(user_id) if user_id is not None else "public"
+    tenant_id = "public"
     if not consume_token(tenant_id, client=client):
         if ingest_rate_limited_total is not None:
             ingest_rate_limited_total.inc()
@@ -304,8 +301,6 @@ def dataset_ingest_task(  # pragma: no cover - heavy
     driver = get_neo4j_driver()
     storage = get_s3_storage()
     ds = DatasetBuilder.from_redis(client, f"dataset:{name}", driver)
-    if user_id is not None and ds.owner_id not in {None, user_id}:
-        raise RuntimeError("Unauthorized")
     ds.redis_client = client
     opt_fields = IngestOptionsModel.model_fields.keys()
     opt_args = {k: kwargs.pop(k) for k in list(kwargs) if k in opt_fields}
@@ -414,23 +409,22 @@ def dataset_ingest_task(  # pragma: no cover - heavy
 
 
 def enqueue_dataset_ingest(
-    name: DatasetName, path: str, user_id: int | None = None, **kwargs
+    name: DatasetName, path: str, **kwargs
 ) -> object:
     """Enqueue ingestion in Kafka if configured, else run via Celery."""
 
     if os.getenv("KAFKA_BOOTSTRAP_SERVERS"):
         from datacreek.utils.kafka_queue import enqueue_ingest
 
-        return enqueue_ingest(name, path, user_id=user_id, **kwargs)
+        return enqueue_ingest(name, path, **kwargs)
 
-    return dataset_ingest_task.apply_async(args=[name, path, user_id], kwargs=kwargs)
+    return dataset_ingest_task.apply_async(args=[name, path], kwargs=kwargs)
 
 
 @celery_app.task
 def dataset_generate_task(  # pragma: no cover - heavy
     name: DatasetName,
     params: dict | None = None,
-    user_id: int | None = None,
     *,
     provider: str | None = None,
     profile: str | None = None,
@@ -441,8 +435,6 @@ def dataset_generate_task(  # pragma: no cover - heavy
     client = get_redis_client()
     driver = get_neo4j_driver()
     ds = DatasetBuilder.from_redis(client, f"dataset:{name}", driver)
-    if user_id is not None and ds.owner_id not in {None, user_id}:
-        raise RuntimeError("Unauthorized")
     ds.redis_client = client
     params = params or {}
     opt_fields = GenerationOptionsModel.model_fields.keys()
@@ -482,15 +474,13 @@ def dataset_generate_task(  # pragma: no cover - heavy
 
 @celery_app.task
 def dataset_cleanup_task(  # pragma: no cover - heavy
-    name: str, params: dict | None = None, user_id: int | None = None
+    name: str, params: dict | None = None
 ) -> dict:
     """Run cleanup operations on a persisted dataset."""
 
     client = get_redis_client()
     driver = get_neo4j_driver()
     ds = DatasetBuilder.from_redis(client, f"dataset:{name}", driver)
-    if user_id is not None and ds.owner_id not in {None, user_id}:
-        raise RuntimeError("Unauthorized")
     ds.redis_client = client
     params = params or {}
     key = f"dataset:{name}:progress"
@@ -530,7 +520,6 @@ def dataset_cleanup_task(  # pragma: no cover - heavy
 def dataset_export_task(  # pragma: no cover - heavy
     name: DatasetName,
     fmt: ExportFormat = ExportFormat.JSONL,
-    user_id: int | None = None,
 ) -> dict:
     """Format the latest generation result and mark the dataset exported."""
 
@@ -540,8 +529,6 @@ def dataset_export_task(  # pragma: no cover - heavy
     driver = get_neo4j_driver()
     storage = get_s3_storage()
     ds = DatasetBuilder.from_redis(client, f"dataset:{name}", driver)
-    if user_id is not None and ds.owner_id not in {None, user_id}:
-        raise RuntimeError("Unauthorized")
     ds.redis_client = client
     data = None
     key: str
@@ -556,7 +543,7 @@ def dataset_export_task(  # pragma: no cover - heavy
                 path = export_delta(
                     data,
                     root=root_dir,
-                    org_id=ds.owner_id or "anon",
+                    org_id="public",
                     kind=ds.dataset_type.value,
                 )
                 repo = os.getenv("LAKEFS_REPO")
@@ -600,15 +587,13 @@ def dataset_export_task(  # pragma: no cover - heavy
 
 @celery_app.task
 def dataset_save_neo4j_task(
-    name: DatasetName, user_id: int | None = None
+    name: DatasetName
 ) -> dict:  # pragma: no cover - heavy
     """Persist the dataset graph to Neo4j."""
 
     client = get_redis_client()
     driver = get_neo4j_driver()
     ds = DatasetBuilder.from_redis(client, f"dataset:{name}", driver)
-    if user_id is not None and ds.owner_id not in {None, user_id}:
-        raise RuntimeError("Unauthorized")
     ds.redis_client = client
     if not driver:
         raise RuntimeError("Neo4j not configured")
@@ -640,15 +625,13 @@ def dataset_save_neo4j_task(
 
 @celery_app.task
 def dataset_load_neo4j_task(
-    name: DatasetName, user_id: int | None = None
+    name: DatasetName
 ) -> dict:  # pragma: no cover - heavy
     """Load the dataset graph from Neo4j."""
 
     client = get_redis_client()
     driver = get_neo4j_driver()
     ds = DatasetBuilder.from_redis(client, f"dataset:{name}", driver)
-    if user_id is not None and ds.owner_id not in {None, user_id}:
-        raise RuntimeError("Unauthorized")
     ds.redis_client = client
     if not driver:
         raise RuntimeError("Neo4j not configured")
@@ -678,14 +661,12 @@ def dataset_load_neo4j_task(
 
 @celery_app.task
 def dataset_save_redis_graph_task(  # pragma: no cover - heavy
-    name: DatasetName, user_id: int | None = None
+    name: DatasetName
 ) -> dict:
     """Persist the dataset graph to RedisGraph."""
 
     client = get_redis_client()
     ds = DatasetBuilder.from_redis(client, f"dataset:{name}", None)
-    if user_id is not None and ds.owner_id not in {None, user_id}:
-        raise RuntimeError("Unauthorized")
     ds.redis_client = client
     graph = get_redis_graph(name)
     if graph is None:
@@ -713,14 +694,12 @@ def dataset_save_redis_graph_task(  # pragma: no cover - heavy
 
 @celery_app.task
 def dataset_load_redis_graph_task(  # pragma: no cover - heavy
-    name: DatasetName, user_id: int | None = None
+    name: DatasetName
 ) -> dict:
     """Load the dataset graph from RedisGraph."""
 
     client = get_redis_client()
     ds = DatasetBuilder.from_redis(client, f"dataset:{name}", None)
-    if user_id is not None and ds.owner_id not in {None, user_id}:
-        raise RuntimeError("Unauthorized")
     ds.redis_client = client
     graph = get_redis_graph(name)
     if graph is None:
@@ -751,15 +730,12 @@ def dataset_operation_task(  # pragma: no cover - heavy
     name: DatasetName,
     operation: str,
     params: dict | None = None,
-    user_id: int | None = None,
 ) -> dict:
     """Run an arbitrary dataset method and persist the result."""
 
     client = get_redis_client()
     driver = get_neo4j_driver()
     ds = DatasetBuilder.from_redis(client, f"dataset:{name}", driver)
-    if user_id is not None and ds.owner_id not in {None, user_id}:
-        raise RuntimeError("Unauthorized")
     ds.redis_client = client
     params = params or {}
     func = getattr(ds, operation)
@@ -792,15 +768,13 @@ def dataset_operation_task(  # pragma: no cover - heavy
 
 @celery_app.task
 def dataset_prune_versions_task(  # pragma: no cover - heavy
-    name: DatasetName, limit: int | None = None, user_id: int | None = None
+    name: DatasetName, limit: int | None = None
 ) -> dict:
     """Prune stored versions for ``name`` down to ``limit``."""
 
     client = get_redis_client()
     driver = get_neo4j_driver()
     ds = DatasetBuilder.from_redis(client, f"dataset:{name}", driver)
-    if user_id is not None and ds.owner_id not in {None, user_id}:
-        raise RuntimeError("Unauthorized")
     ds.redis_client = client
     key = f"dataset:{name}:progress"
     start_ts = datetime.now(timezone.utc).isoformat()
@@ -824,15 +798,13 @@ def dataset_prune_versions_task(  # pragma: no cover - heavy
 
 @celery_app.task
 def dataset_restore_version_task(  # pragma: no cover - heavy
-    name: DatasetName, index: int, user_id: int | None = None
+    name: DatasetName, index: int
 ) -> dict:
     """Restore ``index`` for ``name`` as the latest dataset version."""
 
     client = get_redis_client()
     driver = get_neo4j_driver()
     ds = DatasetBuilder.from_redis(client, f"dataset:{name}", driver)
-    if user_id is not None and ds.owner_id not in {None, user_id}:
-        raise RuntimeError("Unauthorized")
     ds.redis_client = client
     key = f"dataset:{name}:progress"
     start_ts = datetime.now(timezone.utc).isoformat()
@@ -860,15 +832,13 @@ def dataset_restore_version_task(  # pragma: no cover - heavy
 
 @celery_app.task
 def dataset_delete_version_task(  # pragma: no cover - heavy
-    name: DatasetName, index: int, user_id: int | None = None
+    name: DatasetName, index: int
 ) -> dict:
     """Delete ``index`` from ``name`` and persist the dataset."""
 
     client = get_redis_client()
     driver = get_neo4j_driver()
     ds = DatasetBuilder.from_redis(client, f"dataset:{name}", driver)
-    if user_id is not None and ds.owner_id not in {None, user_id}:
-        raise RuntimeError("Unauthorized")
     ds.redis_client = client
     key = f"dataset:{name}:progress"
     start_ts = datetime.now(timezone.utc).isoformat()
@@ -951,8 +921,6 @@ def datasets_prune_stale_task(days: int = 30) -> dict:  # pragma: no cover - hea
             for k in keys:
                 pipe.delete(k)
             pipe.srem("datasets", name)
-            if ds.owner_id is not None:
-                pipe.srem(f"user:{ds.owner_id}:datasets", name)
             pipe.execute()
             graph = get_redis_graph(name)
             if graph is not None:

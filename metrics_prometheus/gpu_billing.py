@@ -19,18 +19,38 @@ from __future__ import annotations
 
 from typing import Dict
 
-from prometheus_client import Counter
+from datacreek.utils.deps import optional_import
+
+Counter = optional_import("prometheus_client", "Counter")
+
+
+class _NoopMetric:
+    def labels(self, **kwargs):
+        return self
+
+    def inc(self, amount=1.0):
+        return self
+
+
+def _create_counter(name: str, description: str, labelnames, registry=None):
+    if Counter is None:
+        return _NoopMetric()
+    kwargs = {}
+    if registry is not None:
+        kwargs["registry"] = registry
+    return Counter(name, description, labelnames, **kwargs)
+
 
 # Counter recording the total GPU minutes consumed per tenant
 # Labels: tenant - unique tenant identifier
 # Metric name intentionally follows the ``*_total`` convention so Prometheus
 # exposes ``gpu_minutes_total_total`` as the sample value.
-gpu_minutes_total = Counter(
+gpu_minutes_total = _create_counter(
     "gpu_minutes_total", "Accumulated GPU minutes per tenant", ["tenant"]
 )
 
 # Counter recording the total GPU cost per tenant in the configured currency
-gpu_cost_total = Counter(
+gpu_cost_total = _create_counter(
     "gpu_cost_total", "Accumulated GPU cost per tenant", ["tenant"]
 )
 
@@ -67,6 +87,11 @@ class QuotaController:
         """
 
         return self._credits.get(tenant, 0.0)
+
+    def has_account(self, tenant: str) -> bool:
+        """Return True if *tenant* already has a credit balance recorded."""
+
+        return tenant in self._credits
 
     def add_credits(self, tenant: str, minutes: float) -> float:
         """Add ``minutes`` of GPU credit for *tenant* and return new balance."""

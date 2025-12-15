@@ -72,6 +72,7 @@ else:  # pragma: no cover - metrics disabled
 
 # Languages allowed for downstream BLIP/Whisper processing
 ALLOWED_LANGS = {"fr", "en"}
+FRENCH_ACCENTS = frozenset("àâäéèêëîïôöùûüÿçœæ")
 
 
 class Payload(BaseModel):
@@ -91,12 +92,11 @@ def detect_language(text: str) -> str:
     """
 
     lower = text.lower()
-    if any(ch in lower for ch in "àâçéèêëîïôùûüÿœ") or "bonjour" in lower:
+    if any(ch in lower for ch in FRENCH_ACCENTS) or "bonjour" in lower:
         return "fr"
     if "hola" in lower:
         return "es"
     return "en"
-
 
 def compute_snr_threshold(history: List[float]) -> float:
     """Compute :math:`\text{thr}_{SNR}` from a history of SNR samples."""

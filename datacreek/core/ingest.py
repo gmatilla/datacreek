@@ -14,13 +14,30 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
+import sys
 
 try:  # optional dependency
     from pydantic import BaseModel
 except Exception:  # pragma: no cover - optional dependency missing
 
-    class BaseModel:  # lightweight stub for missing pydantic
-        pass
+    class _FallbackBaseModel:  # lightweight stub for missing pydantic
+        def __init__(self, **data):
+            logging.getLogger(__name__).warning(
+                "Pydantic missing; falling back to simple BaseModel wrapper: %s", data
+            )
+            for key, value in data.items():
+                setattr(self, key, value)
+
+        @classmethod
+        def model_validate(cls, data):
+            if data is None:
+                return cls()
+            return cls(**data)
+
+        def model_dump(self):
+            return self.__dict__
+
+    BaseModel = _FallbackBaseModel
 
 
 from datacreek.analysis.monitoring import blip_called_total, blip_skipped_total
@@ -161,7 +178,7 @@ def process_file(
             else:
                 content = "\n".join(ocr_texts)
         except Exception:  # pragma: no cover - optional deps may be missing
-            pass
+            logger.warning("PDF OCR fallback failed for %s: %s", file_path, sys.exc_info()[1])
 
     if return_pages and isinstance(content, tuple):
         text, pages = content
@@ -530,7 +547,7 @@ def to_kg(
         update_metric("atoms_total", float(n_atoms))
         update_metric("avg_chunk_len", float(avg_len))
     except Exception:  # pragma: no cover - optional Prometheus
-        pass
+        logger.debug("Embedding metrics unavailable for %s: %s", doc_id, sys.exc_info()[1])
 
     if build_index:
         dataset.graph.index.build()
@@ -612,8 +629,8 @@ def ingest_into_dataset(
         from datacreek.utils.checksum import md5_file
 
         checksum = md5_file(file_path)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.info("Checksum unavailable for %s: %s", file_path, exc)
     try:
         to_kg(
             text,
@@ -650,7 +667,7 @@ def ingest_into_dataset(
             for cid in dataset.graph.get_chunks_for_document(doc_id):
                 dataset.graph.link_transcript(cid, audio_id, provenance=file_path)
     except Exception:  # pragma: no cover - optional deps may be missing
-        pass
+        logger.info("Audio enrichment skipped for %s: %s", file_path, sys.exc_info()[1])
 
     if extract_entities:
         try:

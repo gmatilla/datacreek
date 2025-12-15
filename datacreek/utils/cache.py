@@ -59,7 +59,7 @@ def cache_l1(func: Callable) -> Callable:
 class TTLManager:
     """Asynchronous manager adjusting TTL from hit ratio."""
 
-    def __init__(self) -> None:  # pragma: no cover - init starts background thread
+    def __init__(self, *, autostart: bool = True) -> None:
         self.current_ttl = int(cache_cfg.get("l1_ttl_init", 3600))
         pid_cfg = cache_cfg.get("ttl_pid", {})
         self._target = float(pid_cfg.get("target_hit_ratio", 0.8))
@@ -73,7 +73,8 @@ class TTLManager:
         self._stop: Optional[asyncio.Event] = None
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._thread: Thread | None = None
-        self.start()
+        if autostart:  # pragma: no cover - start path exercised in integration tests
+            self.start()
 
     async def _loop(self) -> None:  # pragma: no cover - background
         assert self._stop is not None
@@ -158,7 +159,39 @@ class TTLManager:
         )
 
 
-ttl_manager = TTLManager()
+_ttl_manager: TTLManager | None = None
+
+
+def get_ttl_manager(*, start: bool = True) -> TTLManager:
+    """Return the singleton TTL manager, starting it if requested."""
+
+    global _ttl_manager
+    if _ttl_manager is None:
+        _ttl_manager = TTLManager(autostart=False)
+    if start:
+        _ttl_manager.start()
+    return _ttl_manager
+
+
+async def stop_ttl_manager_async() -> None:
+    """Asynchronously stop the singleton TTL manager."""
+
+    global _ttl_manager
+    if _ttl_manager is None:
+        return
+    await _ttl_manager.stop()
+    _ttl_manager = None
+
+
+def stop_ttl_manager() -> None:
+    """Stop the TTL manager, creating an event loop if necessary."""
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(stop_ttl_manager_async())
+    else:
+        loop.create_task(stop_ttl_manager_async())
 
 
 def l1_cache(key_fn: Callable[..., str]) -> Callable[[Callable], Callable]:
@@ -183,7 +216,8 @@ def l1_cache(key_fn: Callable[..., str]) -> Callable[[Callable], Callable]:
                 try:
                     if miss is not None:
                         miss.inc()
-                    redis.setex(key, ttl_manager.current_ttl, result)
+                    ttl = get_ttl_manager().current_ttl
+                    redis.setex(key, ttl, result)
                 except redis.RedisError:
                     logging.getLogger(__name__).warning(
                         "Redis error on set", exc_info=True

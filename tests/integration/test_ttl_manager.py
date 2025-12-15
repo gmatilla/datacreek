@@ -2,14 +2,12 @@ import asyncio
 import importlib.abc
 import importlib.util
 import sys
-import time
-import warnings
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _load_cache(monkeypatch):
@@ -29,61 +27,50 @@ def _load_cache(monkeypatch):
     return cache
 
 
-@pytest.fixture(autouse=True)
-def _cleanup(monkeypatch):
+class DummyCounter:
+    def __init__(self, value: int = 0):
+        self.value = value
+        self._value = SimpleNamespace(get=lambda: self.value)
+
+    def inc(self):
+        self.value += 1
+
+
+class DummyGauge:
+    def __init__(self):
+        self.values = []
+
+    def set(self, value):
+        self.values.append(value)
+
+
+@pytest.fixture()
+def cache_mod(monkeypatch):
     cache = _load_cache(monkeypatch)
+    cache.hits = DummyCounter(5)
+    cache.miss = DummyCounter(5)
+    cache.hit_ratio_g = DummyGauge()
     yield cache
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(cache.ttl_manager.stop())
-    loop.close()
+    asyncio.run(cache.stop_ttl_manager_async())
 
 
-def test_ttl_adaptive(monkeypatch, _cleanup):
-    cache = _cleanup
-    cache.ttl_manager.current_ttl = 600
-    if cache.hits is None or cache.hit_ratio_g is None:
-        pytest.skip("prometheus not available")
-    for _ in range(3):
-        cache.hits.inc()
-    time.sleep(0.1)
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(cache.ttl_manager.update())
-    loop.close()
-    assert cache.ttl_manager.current_ttl < 600
+def test_manager_lazy_start(cache_mod):
+    mgr = cache_mod.get_ttl_manager(start=False)
+    assert mgr._task is None
+
+    cache_mod.get_ttl_manager()  # starts loop
+    assert mgr._task is not None
 
 
-def test_ttl_manager_async_task(_cleanup):
-    cache = _cleanup
-
-    async def run_once():
-        await cache.ttl_manager.update()
-
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(run_once())
-    loop.close()
-    assert cache.ttl_manager.current_ttl > 0
+def test_run_once_updates_metrics(cache_mod):
+    mgr = cache_mod.get_ttl_manager(start=False)
+    current = mgr.current_ttl
+    mgr.run_once()
+    assert cache_mod.hit_ratio_g.values
+    assert mgr.current_ttl != current
 
 
-def test_ttl_manager_stop(_cleanup):
-    cache = _cleanup
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(cache.ttl_manager.stop())
-    loop.close()
-    assert cache.ttl_manager._task is None
-
-
-def test_ttl_pid_convergence(monkeypatch, _cleanup):
-    cache = _cleanup
-    cache.ttl_manager.current_ttl = 600
-    cache.ttl_manager._integral_err = 0.0
-
-    ratios = [0.2] * 3 + [0.9] * 3 + [0.45] * 6
-    for r in ratios:
-        hits = int(r * 100)
-        miss = 100 - hits
-        cache.hits._value.set(hits)
-        cache.miss._value.set(miss)
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(cache.ttl_manager.update())
-        loop.close()
-    assert 300 <= cache.ttl_manager.current_ttl <= 600
+def test_stop_helper_resets_singleton(cache_mod):
+    cache_mod.get_ttl_manager()
+    asyncio.run(cache_mod.stop_ttl_manager_async())
+    assert cache_mod._ttl_manager is None

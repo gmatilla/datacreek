@@ -6,7 +6,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-import torch
+import pytest
+
+torch = pytest.importorskip("torch")
+pytest.importorskip("bitsandbytes")
 
 # Ensure the lightweight scikit-learn stub installed by ``tests.conftest`` has a
 # module specification so ``importlib.find_spec('sklearn')`` succeeds.

@@ -22,12 +22,16 @@ from datacreek.analysis import bottleneck_distance
 try:
     from datacreek import AutoTuneState
     from datacreek.core.knowledge_graph import KnowledgeGraph
-except Exception:  # pragma: no cover - deps missing
+except Exception as e:  # pragma: no cover - deps missing
+    print(f"DEBUG: Import failed: {e}")
+    import traceback
+    traceback.print_exc()
     AutoTuneState = None  # type: ignore
     KnowledgeGraph = None  # type: ignore
 
 
 def test_add_document_and_chunk():
+    assert KnowledgeGraph is not None, "KnowledgeGraph is None due to import failure"
     kg = KnowledgeGraph()
     kg.add_document("doc1", source="paper.pdf")
     kg.add_chunk("doc1", "chunk1", "hello")

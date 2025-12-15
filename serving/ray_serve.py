@@ -24,15 +24,19 @@ Example
 
 from __future__ import annotations
 
+import logging
 import random
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 
 from prometheus_client import Counter, Histogram
 from ray import serve
 from starlette.requests import Request
 
-_latencies: defaultdict[str, list[float]] = defaultdict(list)
+_latencies: defaultdict[str, deque[float]] = defaultdict(
+    lambda: deque(maxlen=1024)
+)
+LOGGER = logging.getLogger(__name__)
 
 # Prometheus metrics tracking request counts and latency per tenant and model
 # version. These gauges allow operators to monitor production traffic and
@@ -66,7 +70,7 @@ def _record_latency(deployment: str, duration: float) -> None:
     REQUEST_LATENCY.labels(tenant=tenant, model_version=model_version).observe(duration)
 
 
-def _p99(samples: list[float]) -> float:
+def _p99(samples: deque[float]) -> float:
     """Return the 99th percentile latency from ``samples``.
 
     The implementation avoids heavy dependencies like NumPy by sorting
@@ -91,6 +95,7 @@ def _maybe_rollback(tenant: str) -> bool:
     canary = _p99(_latencies[f"{tenant}-canary"])
     if prod and canary and canary > 2 * prod:
         serve.delete_deployment(f"{tenant}-canary")
+        LOGGER.warning("Canary p99 %.3f > 2x prod %.3f for %s; rolling back", canary, prod, tenant)
         return True
     return False
 

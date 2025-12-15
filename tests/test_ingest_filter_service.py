@@ -58,6 +58,32 @@ def test_skip_on_unsupported_language() -> None:
         assert ingest_filter.LANG_SKIPPED_TOTAL._value.get() == start + 1
 
 
+def test_allows_supported_languages(monkeypatch) -> None:
+    """French and English payloads pass without incrementing lang_skipped_total."""
+
+    def pass_filter(text: str, threshold: float = 0.7):  # pragma: no cover - stub
+        return text
+
+    monkeypatch.setattr(ingest_filter, "filter_text", pass_filter)
+    app = ingest_filter.create_app()
+    client = TestClient(app)
+
+    start = (
+        ingest_filter.LANG_SKIPPED_TOTAL._value.get()
+        if ingest_filter.LANG_SKIPPED_TOTAL is not None
+        else 0.0
+    )
+    for text in ("Bonjour tout le monde", "Hello world"):
+        resp = client.post(
+            "/filter",
+            json={"text": text, "snr": 10.0, "snr_history": [10.0]},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+    if ingest_filter.LANG_SKIPPED_TOTAL is not None:
+        assert ingest_filter.LANG_SKIPPED_TOTAL._value.get() == start
+
+
 def test_block_on_low_snr() -> None:
     """Audio below the dynamic SNR threshold is rejected."""
 
@@ -83,3 +109,9 @@ def test_block_on_low_snr() -> None:
         assert ingest_filter.FILTER_BLOCK_TOTAL._value.get() == start + 1
     if ingest_filter.SNR_BLOCK_TOTAL is not None:
         assert ingest_filter.SNR_BLOCK_TOTAL._value.get() == snr_start + 1
+
+
+def test_detect_language_handles_accents() -> None:
+    """French phrases with accents are classified as French."""
+
+    assert ingest_filter.detect_language("sécurité avec accents") == "fr"

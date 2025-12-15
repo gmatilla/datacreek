@@ -9,16 +9,7 @@ from pathlib import Path
 import pytest
 
 if np is not None:
-    spec = importlib.util.spec_from_file_location(
-        "poincare_recentering",
-        Path(__file__).resolve().parents[1]
-        / "datacreek"
-        / "analysis"
-        / "poincare_recentering.py",
-    )
-    poincare_recentering = importlib.util.module_from_spec(spec)
-    assert isinstance(spec.loader, importlib.abc.Loader)
-    spec.loader.exec_module(poincare_recentering)
+    from datacreek.analysis import poincare_recentering
     recenter_embeddings = poincare_recentering.recenter_embeddings
 
 if np is not None and poincare_recentering.torch is not None:

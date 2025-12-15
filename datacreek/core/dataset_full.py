@@ -80,6 +80,12 @@ from .knowledge_graph import KnowledgeGraph
 
 logger = logging.getLogger(__name__)
 
+
+def _log_ignored_failure(message: str) -> None:
+    """Log suppressed failures so we know which background task hiccuped."""
+
+    logger.warning("%s; continuing despite failure", message, exc_info=True)
+
 MAX_NAME_LENGTH = 64
 NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
@@ -138,7 +144,6 @@ class DatasetBuilder:
     graph: KnowledgeGraph = field(default_factory=KnowledgeGraph)
     use_hnsw: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    owner_id: int | None = None
     history: List[str] = field(default_factory=list)
     events: List[HistoryEvent] = field(default_factory=list)
     feedback: List[Dict[str, Any]] = field(default_factory=list)
@@ -167,7 +172,7 @@ class DatasetBuilder:
         try:
             self.stop_policy_monitor_thread()
         except Exception:  # pragma: no cover - best effort cleanup
-            pass
+            _log_ignored_failure("Policy monitor thread stop failed")
 
     # ------------------------------------------------------------------
     # Name validation
@@ -226,8 +231,6 @@ class DatasetBuilder:
                 pipe = self.redis_client.pipeline()
                 self.to_redis(pipe, key)
                 pipe.sadd("datasets", self.name)
-                if self.owner_id is not None:
-                    pipe.sadd(f"user:{self.owner_id}:datasets", self.name)
                 pipe.execute()
             except Exception:  # pragma: no cover - persistence failure
                 logger.exception("Failed to persist dataset %s", self.name)
@@ -345,7 +348,7 @@ class DatasetBuilder:
             try:
                 update_metric(k, float(v))
             except Exception:
-                pass
+                _log_ignored_failure(f"Failed to update metric {k}")
 
     def generate_model_card(
         self,
@@ -2924,11 +2927,11 @@ class DatasetBuilder:
                 }
             )
         except Exception:
-            pass
+            _log_ignored_failure("Failed to push autotune metrics")
         try:
             self.log_cycle_metrics()
         except Exception:
-            pass
+            _log_ignored_failure("Failed to refresh cycle metrics after autotuning")
         return res
 
     def svgp_ei_propose(  # pragma: no cover
@@ -3939,7 +3942,7 @@ class DatasetBuilder:
             if _tpl_w1_gauge is not None:
                 _tpl_w1_gauge.set(float(res["distance_after"]))
         except Exception:
-            pass
+            _log_ignored_failure("Failed to update tpl_w1 gauge")
         self._record_event(
             "tpl_correct_graph",
             "Wasserstein-based topology correction",
@@ -5397,7 +5400,7 @@ class DatasetBuilder:
         try:
             push_metrics({"prompts_exported": float(len(data))})
         except Exception:
-            pass
+            _log_ignored_failure("Failed to push prompt export metrics")
         return data
 
     @persist_after
@@ -5497,7 +5500,7 @@ class DatasetBuilder:
         try:
             graph.query("MATCH (n {dataset:$ds}) DETACH DELETE n", {"ds": self.name})
         except Exception:
-            pass
+            _log_ignored_failure("Failed to drop existing RedisGraph nodes")
         for node_id, attrs in self.graph.graph.nodes(data=True):
             label = attrs.get("type", "Node")
             props = {k: v for k, v in attrs.items() if k != "type"}

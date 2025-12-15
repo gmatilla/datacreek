@@ -23,12 +23,41 @@ Example
 
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, Tuple
 
-import torch
-from bitsandbytes import functional as bnb
+torch = None  # type: ignore[assignment]
+bnb = None  # type: ignore[assignment]
+
+
+def _require_torch():
+    """Import torch lazily to avoid crashing on environments without it."""
+    global torch
+    if torch is None:  # pragma: no cover - import failure surfaces in tests
+        try:
+            torch = importlib.import_module("torch")
+        except Exception as exc:  # pragma: no cover - surfaces when torch missing
+            raise RuntimeError(
+                "PyTorch is required for training.quant_utils but is not installed; "
+                "install torch or skip NF4 quantization helpers."
+            ) from exc
+    return torch
+
+
+def _require_bitsandbytes():
+    """Import bitsandbytes lazily so CPU-only setups can skip quantization."""
+    global bnb
+    if bnb is None:  # pragma: no cover - import failure surfaces in tests
+        try:
+            bnb = importlib.import_module("bitsandbytes.functional")
+        except Exception as exc:  # pragma: no cover - surfaces when bnb missing
+            raise RuntimeError(
+                "bitsandbytes is required for NF4 quantization; install bitsandbytes "
+                "or guard calls to training.quant_utils.quantize_state_dict_nf4."
+            ) from exc
+    return bnb
 
 
 @dataclass
@@ -88,6 +117,7 @@ def _per_channel_scale(weight: torch.Tensor) -> torch.Tensor:
     epsilon ensures we never divide by zero.
     """
 
+    _require_torch()
     max_per_channel = weight.abs().max(dim=-1, keepdim=True).values
     scale = torch.clamp(max_per_channel / 127.0, min=1e-8)
     return scale
@@ -117,6 +147,7 @@ def smoothquant_group_scales(
         by ``group_size``.
     """
 
+    _require_torch()
     last_dim = weight.shape[-1]
     if last_dim % group_size != 0:
         raise ValueError("last dimension must be divisible by group_size")
@@ -154,6 +185,7 @@ def quantize_bfloat4(
         The second tensor holds the per-group scales.
     """
 
+    _require_torch()
     scales = smoothquant_group_scales(weight, group_size=group_size)
     # Reshape weights to align groups with their scale
     last_dim = weight.shape[-1]
@@ -186,6 +218,8 @@ def quantize_state_dict_nf4(
         scales.
     """
 
+    _require_torch()
+    _require_bitsandbytes()
     quantized: Dict[str, QuantizedParam] = {}
     for name, weight in state.items():
         if weight.ndim == 1:
@@ -209,6 +243,7 @@ def dequantize_state_dict_nf4(
 ) -> Dict[str, torch.Tensor]:
     """Reconstruct approximate weights from NF4 quantized parameters."""
 
+    _require_bitsandbytes()
     dequantized: Dict[str, torch.Tensor] = {}
     for name, param in qstate.items():
         recovered = bnb.dequantize_nf4(param.qweight, param.absmax)
@@ -224,6 +259,7 @@ def export_gguf(qstate: Dict[str, QuantizedParam], path: str) -> None:
     by ``torch.save`` of the quantized parameters.
     """
 
+    _require_torch()
     data_path = Path(path)
     with data_path.open("wb") as f:
         f.write(b"GGUF")
@@ -233,6 +269,7 @@ def export_gguf(qstate: Dict[str, QuantizedParam], path: str) -> None:
 def merge_and_quantize(base_path: str, lora_path: str, out_path: str) -> None:
     """Utility combining merge and quantize steps for CLI use."""
 
+    _require_torch()
     base_state = torch.load(base_path, weights_only=True)
     lora_state = torch.load(lora_path, weights_only=True)
     merged = merge_lora_weights(base_state, lora_state)

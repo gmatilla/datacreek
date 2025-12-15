@@ -9,7 +9,7 @@ import numpy as np
 
 def test_cache_env(monkeypatch, tmp_path):
     monkeypatch.setenv("DATACREEK_CACHE", str(tmp_path))
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(root))
     skl = types.ModuleType("sklearn.cross_decomposition")
     skl.CCA = lambda n_components=2: type(

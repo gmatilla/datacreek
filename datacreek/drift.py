@@ -17,7 +17,9 @@ from dataclasses import dataclass
 from math import sqrt
 from typing import Dict
 
-from prometheus_client import Counter
+from datacreek.utils.deps import optional_import
+
+Counter = optional_import("prometheus_client", "Counter")
 
 WARN_THRESHOLD: float = 0.07
 """Drift value above which the system should emit a warning."""
@@ -28,8 +30,18 @@ CRIT_THRESHOLD: float = 0.10
 # Counter tracking how many drift alerts were raised for each tenant.  This can
 # be scraped by billing or monitoring systems to observe stability across
 # tenants over time.
-drift_alert_total = Counter(
-    "drift_alert_total", "Number of EWMA drift alerts by tenant", ["tenant"]
+class _NoopMetric:
+    def labels(self, **kwargs):
+        return self
+
+    def inc(self, amount=1.0):
+        return self
+
+
+drift_alert_total = (
+    Counter("drift_alert_total", "Number of EWMA drift alerts by tenant", ["tenant"])
+    if Counter is not None
+    else _NoopMetric()
 )
 
 

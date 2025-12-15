@@ -443,7 +443,7 @@ sequenceDiagram
 Clone the repository and install the dependencies in a virtual environment:
 
 ```bash
-git clone https://github.com/meta-llama/datacreek.git
+git clone https://github.com/gmatilla/datacreek.git
 cd datacreek
 python -m venv .venv
 source .venv/bin/activate
@@ -458,7 +458,7 @@ For local inference, you'll need to install and run VLLM:
 pip install vllm
 
 # Start the VLLM server with your preferred model
-vllm serve meta-llama/Llama-3.3-70B-Instruct --port 8000
+vllm serve gmatilla/Llama-3.3-70B-Instruct --port 8000
 ```
 
 
@@ -475,7 +475,7 @@ Datacreek uses a YAML-based configuration system with a central config file.
 vllm:
   api_base: "http://localhost:8000/v1"
   port: 8000
-  model: "meta-llama/Llama-3.3-70B-Instruct"
+  model: "gmatilla/Llama-3.3-70B-Instruct"
   max_retries: 3
   retry_delay: 1.0
 
@@ -1243,7 +1243,7 @@ The toolkit supports these environment variables for debugging and configuration
 | `SDK_BATCH_SIZE` | Override batch size for curate command | Config setting | `export SDK_BATCH_SIZE=1` |
 | `LLM_PROVIDER` | Choose underlying LLM provider | – | `export LLM_PROVIDER=vllm` |
 | `LLM_API_BASE` | Base URL for the LLM API | – | `export LLM_API_BASE=http://localhost:8000/v1` |
-| `LLM_MODEL` | Model name for LLM calls | – | `export LLM_MODEL=meta-llama/Llama-3.3-70B-Instruct` |
+| `LLM_MODEL` | Model name for LLM calls | – | `export LLM_MODEL=gmatilla/Llama-3.3-70B-Instruct` |
 | `LLM_MAX_RETRIES` | Max retries for LLM requests | `3` | `export LLM_MAX_RETRIES=5` |
 | `LLM_RETRY_DELAY` | Delay between retries | `1.0` | `export LLM_RETRY_DELAY=2` |
 | `API_ENDPOINT_KEY` | API key for external provider | – | `export API_ENDPOINT_KEY=sk-abc` |
@@ -1312,7 +1312,7 @@ vérifie que les seuils actifs correspondent au fichier YAML et lève une
 
 ```bash
 # Start VLLM server (in a separate terminal)
-vllm serve meta-llama/Llama-3.3-70B-Instruct --port 8000
+vllm serve gmatilla/Llama-3.3-70B-Instruct --port 8000
 
 # Check if server is running
 curl http://localhost:8000/v1/models
@@ -1336,7 +1336,7 @@ Create a custom configuration file `technical_docs.yaml`:
 
 ```yaml
 vllm:
-  model: "meta-llama/Llama-3.3-70B-Instruct"
+  model: "gmatilla/Llama-3.3-70B-Instruct"
 
 generation:
   temperature: 0.5

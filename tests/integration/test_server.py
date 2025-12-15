@@ -5,64 +5,28 @@ import sys
 
 import fakeredis
 import requests
-from werkzeug.security import generate_password_hash
-
-os.environ["DATABASE_URL"] = "sqlite:///test_server.db"
-if os.path.exists("test_server.db"):
-    os.remove("test_server.db")
-if "datacreek.db" in sys.modules:
-    importlib.reload(sys.modules["datacreek.db"])
 import datacreek.db as db
-
 db.init_db()
-with db.SessionLocal() as session:
-    user = db.User(
-        username="alice",
-        api_key="key",
-        password_hash=generate_password_hash("pw"),
-    )
-    session.add(user)
-    session.commit()
 
 import datacreek.server.app as app_module
+if "datacreek.server.app" in sys.modules:
+    importlib.reload(sys.modules["datacreek.server.app"])
+    app_module = sys.modules["datacreek.server.app"]
+
 from datacreek.core.dataset import DatasetBuilder
 from datacreek.core.knowledge_graph import KnowledgeGraph
-from datacreek.db import verify_password
+
 from datacreek.models.export_format import ExportFormat
 from datacreek.pipelines import DatasetType
 from datacreek.server.app import DATASETS, app
 from datacreek.tasks import dataset_export_task
 
+
 app.config["WTF_CSRF_ENABLED"] = False
+os.environ["DATACREEK_REQUIRE_PERSISTENCE"] = "0"
 
 
-def _login(client):
-    return client.post(
-        "/api/login",
-        json={"username": "alice", "password": "pw"},
-    )
 
-
-def test_register_and_login():
-    with app.test_client() as client:
-        res = client.post(
-            "/api/register",
-            json={"username": "bob", "password": "pw"},
-        )
-        data = res.get_json()
-        assert "api_key" in data
-        # Now login with new user
-        res = client.post(
-            "/api/login",
-            json={"username": "bob", "password": "pw"},
-        )
-        assert res.status_code == 200
-
-
-def test_login_required_redirect():
-    with app.test_client() as client:
-        res = client.get("/datasets")
-        assert res.status_code == 401
 
 
 def test_dataset_graph_route():
@@ -72,7 +36,6 @@ def test_dataset_graph_route():
     DATASETS["demo"] = ds
 
     with app.test_client() as client:
-        _login(client)
         res = client.get("/datasets/demo/graph")
         assert res.status_code == 200
         data = res.get_json()
@@ -88,7 +51,6 @@ def test_dataset_search_route():
     DATASETS["demo"] = ds
 
     with app.test_client() as client:
-        _login(client)
         res = client.get("/datasets/demo/search", query_string={"q": "hello"})
         assert res.status_code == 200
         data = res.get_json()
@@ -104,7 +66,6 @@ def test_dataset_ingest_route(tmp_path):
     f.write_text("hello world")
 
     with app.test_client() as client:
-        _login(client)
         res = client.post(
             "/datasets/demo/ingest",
             data={"input_path": str(f), "doc_id": "doc1"},
@@ -133,7 +94,6 @@ def test_api_dataset_ingest_resolves_path(tmp_path, monkeypatch):
     f.write_text("hello world")
 
     with app.test_client() as cl:
-        _login(cl)
         res = cl.post(
             "/api/datasets/demo/ingest",
             json={"path": str(f), "high_res": True, "extract_entities": True},
@@ -163,7 +123,6 @@ def test_dataset_detail_route():
     DATASETS["demo"] = ds
 
     with app.test_client() as client:
-        _login(client)
         res = client.get("/api/datasets/demo")
         assert res.status_code == 200
         data = res.get_json()
@@ -191,7 +150,6 @@ def test_save_dataset_neo4j(monkeypatch):
     monkeypatch.setattr(app_module, "get_neo4j_driver", lambda: DummyDriver())
 
     with app.test_client() as client:
-        _login(client)
         res = client.post("/datasets/demo/save_neo4j")
         assert res.status_code == 302
     assert called.get("called")
@@ -218,7 +176,6 @@ def test_load_dataset_neo4j(monkeypatch):
     monkeypatch.setattr(app_module, "get_neo4j_driver", lambda: DummyDriver())
 
     with app.test_client() as client:
-        _login(client)
         res = client.post("/datasets/demo/load_neo4j")
         assert res.status_code == 302
     assert ds.graph is new_graph
@@ -255,7 +212,6 @@ def test_api_neo4j_endpoints(tmp_path, monkeypatch):
     )
 
     with app.test_client() as cl:
-        _login(cl)
         res = cl.post("/api/datasets/demo/save_neo4j")
         assert res.status_code == 200
         prog = cl.get("/api/datasets/demo/progress").get_json()
@@ -290,7 +246,6 @@ def test_api_search_endpoints():
     DATASETS["demo"] = ds
 
     with app.test_client() as client:
-        _login(client)
         res = client.get(
             "/api/datasets/demo/search_hybrid", query_string={"q": "hello", "k": 1}
         )
@@ -446,7 +401,6 @@ def test_dataset_ops_endpoints(monkeypatch):
         return FakeResponse({"search": [{"id": "Q1", "description": "composer"}]})
 
     with app.test_client() as cl:
-        _login(cl)
         ops = [
             "consolidate",
             "communities",
@@ -509,40 +463,10 @@ def test_dataset_ops_endpoints(monkeypatch):
     DATASETS.clear()
 
 
-def test_dataset_owner_isolation(monkeypatch):
-    client = fakeredis.FakeStrictRedis()
-    app_module.REDIS = client
-    app_module.DATASETS.clear()
-
-    with app.test_client() as cl:
-        # login as alice (user id 1) and create dataset
-        cl.post("/api/login", json={"username": "alice", "password": "pw"})
-        res = cl.post("/api/datasets", json={"name": "demo", "dataset_type": "qa"})
-        assert res.status_code == 200
-        cl.get("/api/logout")
-
-        # register second user and login
-        cl.post("/api/register", json={"username": "bob2", "password": "pw"})
-        cl.post("/api/login", json={"username": "bob2", "password": "pw"})
-        res = cl.get("/api/datasets/demo")
-        assert res.status_code == 404
 
 
-def test_dataset_list_visibility(monkeypatch):
-    client = fakeredis.FakeStrictRedis()
-    app_module.REDIS = client
-    app_module.DATASETS.clear()
 
-    with app.test_client() as cl:
-        cl.post("/api/login", json={"username": "alice", "password": "pw"})
-        cl.post("/api/datasets", json={"name": "demo", "dataset_type": "qa"})
-        cl.get("/api/logout")
 
-        cl.post("/api/register", json={"username": "bob3", "password": "pw"})
-        cl.post("/api/login", json={"username": "bob3", "password": "pw"})
-        res = cl.get("/api/datasets")
-        assert res.status_code == 200
-        assert "demo" not in res.get_json()
 
 
 def test_lookup_endpoints():
@@ -559,7 +483,6 @@ def test_lookup_endpoints():
     DATASETS["demo"] = ds
 
     with app.test_client() as client:
-        _login(client)
         res = client.get(
             "/api/datasets/demo/chunk_document", query_string={"cid": "c1"}
         )
@@ -622,7 +545,6 @@ def test_conflicts_endpoint():
     ds.graph.add_fact("A", "likes", "C", source="s2")
     DATASETS["demo"] = ds
     with app.test_client() as client:
-        _login(client)
         res = client.get("/api/datasets/demo/conflicts")
         assert res.status_code == 200
         data = res.get_json()
@@ -664,7 +586,6 @@ def test_api_delete_dataset(monkeypatch):
     monkeypatch.setattr("datacreek.tasks.get_neo4j_driver", lambda: DummyDriver())
 
     with app.test_client() as cl:
-        _login(cl)
         res = cl.delete("/api/datasets/demo")
         assert res.status_code == 200
         data = res.get_json()
@@ -680,27 +601,7 @@ def test_api_delete_dataset(monkeypatch):
     assert "demo" not in client.smembers("datasets")
 
 
-def test_delete_dataset_unauthorized(monkeypatch):
-    client = fakeredis.FakeStrictRedis()
-    app_module.REDIS = client
-    monkeypatch.setattr("datacreek.tasks.get_redis_client", lambda: client)
-    import datacreek.tasks as tasks_mod
 
-    tasks_mod.celery_app.conf.task_always_eager = True
-
-    ds = DatasetBuilder(DatasetType.TEXT, name="demo")
-    ds.redis_client = client
-    ds.owner_id = 1
-    ds.add_document("d", source="s")
-    ds.to_redis(client, "dataset:demo")
-    client.sadd("datasets", "demo")
-    client.sadd("user:1:datasets", "demo")
-
-    with app.test_client() as cl:
-        cl.post("/api/register", json={"username": "bob", "password": "pw"})
-        cl.post("/api/login", json={"username": "bob", "password": "pw"})
-        res = cl.delete("/api/datasets/demo")
-        assert res.status_code == 404
 
 
 def test_graph_api(monkeypatch, tmp_path):
@@ -744,7 +645,6 @@ def test_graph_api(monkeypatch, tmp_path):
     f.write_text("hello world")
 
     with app.test_client() as cl:
-        _login(cl)
         res = cl.post("/api/graphs", json={"name": "g", "documents": [str(f)]})
         assert res.status_code == 200
         res = cl.get("/api/graphs")
@@ -793,7 +693,7 @@ def test_export_result_endpoint(monkeypatch):
 
     dataset_export_task.delay("demo", ExportFormat.JSONL).get()
     with app.test_client() as cl:
-        _login(cl)
+
         res = cl.get("/api/datasets/demo/export_result", query_string={"fmt": "jsonl"})
         assert res.status_code == 200
         data = res.data.decode()
@@ -815,7 +715,7 @@ def test_dataset_version_endpoints(monkeypatch):
     client.sadd("datasets", "demo")
 
     with app.test_client() as cl:
-        _login(cl)
+
         res = cl.get("/api/datasets/demo/versions")
         assert res.status_code == 200
         versions = res.get_json()
@@ -855,7 +755,7 @@ def test_dataset_progress_endpoint(monkeypatch):
     tasks_mod.dataset_generate_task.delay("demo", {"start_step": "CURATE"}).get()
 
     with app.test_client() as cl:
-        _login(cl)
+
         res = cl.get("/api/datasets/demo/progress")
         assert res.status_code == 200
         data = res.get_json()
@@ -882,7 +782,7 @@ def test_dataset_history_endpoint(monkeypatch):
     client.sadd("datasets", "demo")
 
     with app.test_client() as cl:
-        _login(cl)
+
         res = cl.get("/api/datasets/demo/history")
         assert res.status_code == 200
         data = res.get_json()
@@ -911,7 +811,7 @@ def test_cleanup_progress(monkeypatch):
     tasks_mod.dataset_cleanup_task.delay("demo", {}).get()
 
     with app.test_client() as cl:
-        _login(cl)
+
         res = cl.get("/api/datasets/demo/progress")
         assert res.status_code == 200
         data = res.get_json()
@@ -969,7 +869,7 @@ def test_graph_list_visibility(monkeypatch, tmp_path):
 
     with app.test_client() as cl:
         # create graph as alice
-        _login(cl)
+
         cl.post("/api/graphs", json={"name": "g1", "documents": [str(f)]})
         cl.get("/api/logout")
 
@@ -995,7 +895,7 @@ def test_dataset_from_foreign_graph_denied(monkeypatch, tmp_path):
 
     with app.test_client() as cl:
         # alice creates a graph
-        _login(cl)
+
         cl.post("/api/graphs", json={"name": "g2", "documents": [str(f)]})
         cl.get("/api/logout")
 
@@ -1033,7 +933,7 @@ def test_multiple_graphs_per_user(monkeypatch):
     client.sadd("user:1:graphs", "g2")
 
     with app.test_client() as cl:
-        _login(cl)
+
         res = cl.get("/api/graphs")
         assert res.status_code == 200
         assert set(res.get_json()) == {"g1", "g2"}

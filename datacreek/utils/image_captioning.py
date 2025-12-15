@@ -4,31 +4,49 @@ from __future__ import annotations
 
 import logging
 import time
+import importlib
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from typing import Iterable, List
 
-try:  # pragma: no cover - optional dependency
-    from transformers import pipeline
-except Exception:  # pragma: no cover - fallback when transformers missing
-    pipeline = None  # type: ignore
+LOGGER = logging.getLogger(__name__)
+_CAPTIONING_ERR: str | None = None
 
 
 @lru_cache(maxsize=1)
 def _get_model():
     """Return a cached BLIP captioning pipeline."""
-    if pipeline is None:
-        raise ImportError("transformers is required for image captioning")
-    return pipeline("image-to-text", model="Salesforce/blip-image-captioning-base")
+    global _CAPTIONING_ERR
+    if _CAPTIONING_ERR:
+        raise RuntimeError(_CAPTIONING_ERR)
+    try:
+        transformers = importlib.import_module("transformers")
+        pipeline = getattr(transformers, "pipeline")
+    except Exception as exc:  # pragma: no cover - optional dependency missing
+        _CAPTIONING_ERR = (
+            "transformers (with vision extras) is required for image captioning"
+        )
+        raise RuntimeError(_CAPTIONING_ERR) from exc
+
+    try:
+        return pipeline("image-to-text", model="Salesforce/blip-image-captioning-base")
+    except Exception as exc:  # pragma: no cover - runtime errors
+        _CAPTIONING_ERR = f"Failed to instantiate BLIP pipeline: {exc}"
+        raise RuntimeError(_CAPTIONING_ERR) from exc
 
 
 def caption_image(path: str) -> str:
     """Return a caption for the image at ``path``."""
-    model = _get_model()
+    try:
+        model = _get_model()
+    except RuntimeError as exc:
+        LOGGER.warning("image captioning unavailable: %s", exc)
+        return ""
     try:
         result = model(path)
     except Exception as exc:  # pragma: no cover - runtime errors
-        raise RuntimeError("Failed to caption image") from exc
+        LOGGER.exception("Failed to caption image %s", path)
+        return ""
     if not result:
         return ""
     data = result[0]

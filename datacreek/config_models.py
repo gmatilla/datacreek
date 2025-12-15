@@ -143,7 +143,7 @@ class VLLMSettings:
 
     api_base: str = "http://localhost:8000/v1"
     port: int = 8000
-    model: str = "meta-llama/Llama-3.3-70B-Instruct"
+    model: str = "gmatilla/Llama-3.3-70B-Instruct"
     max_retries: int = 3
     retry_delay: float = 1.0
 
@@ -158,7 +158,7 @@ class VLLMSettings:
 class VLLMSettingsModel(BaseModel):
     api_base: str = "http://localhost:8000/v1"
     port: int = 8000
-    model: str = "meta-llama/Llama-3.3-70B-Instruct"
+    model: str = "gmatilla/Llama-3.3-70B-Instruct"
     max_retries: int = 3
     retry_delay: float = 1.0
 

@@ -23,28 +23,51 @@ how many edges arrive after the watermark and are routed to the late-event sink.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, TYPE_CHECKING
 
 import numpy as np
 
-try:  # optional Prometheus metric for late edges
-    from prometheus_client import Counter
-except Exception:  # pragma: no cover - metrics optional
-    Counter = None  # type: ignore
+if TYPE_CHECKING:
+    from prometheus_client import CollectorRegistry as CollectorRegistryType
+else:
+    CollectorRegistryType = Any
 
-# Prometheus counter incremented when an edge arrives after the watermark
-LATE_EDGE_TOTAL: Optional[Counter]
-if Counter is not None:
-    LATE_EDGE_TOTAL = Counter(
-        "late_edge_total",
-        "Hypergraph edges routed to the late-event sink",
-    )
-else:  # pragma: no cover - metrics optional
-    LATE_EDGE_TOTAL = None
+try:
+    from prometheus_client import CollectorRegistry, Counter, REGISTRY
+except Exception:  # pragma: no cover - metrics optional
+    CollectorRegistry = None  # type: ignore
+    Counter = None  # type: ignore
+    REGISTRY = None  # type: ignore
+
+LOGGER = logging.getLogger(__name__)
+_LATE_EDGE_COUNTERS: Dict[int, Any] = {}
+
+
+def get_late_edge_counter(
+    registry: CollectorRegistryType | None = None,
+) -> Counter | None:
+    """Return or create the counter bound to ``registry``."""
+
+    if Counter is None:
+        return None
+    resolved = registry or REGISTRY
+    if resolved is None:
+        return None
+    key = id(resolved)
+    counter = _LATE_EDGE_COUNTERS.get(key)
+    if counter is None:
+        counter = Counter(
+            "late_edge_total",
+            "Hypergraph edges routed to the late-event sink",
+            registry=resolved,
+        )
+        _LATE_EDGE_COUNTERS[key] = counter
+    return counter
 
 
 def process_edge_stream(
@@ -88,6 +111,7 @@ def process_edge_stream_with_watermark(
     window: timedelta = timedelta(seconds=30),
     max_out_of_order: timedelta = timedelta(minutes=10),
     late_sink: Callable[[Dict[str, Any]], None] | None = None,
+    registry: CollectorRegistryType | None = None,
 ) -> None:
     """Stream edges with bounded out-of-orderness and late-event replay.
 
@@ -116,23 +140,54 @@ def process_edge_stream_with_watermark(
     late_sink:
         Optional callback invoked with late events.  It can forward the event to
         a Kafka topic such as ``late_edges``.
+    registry:
+        Optional Prometheus registry used to expose ``late_edge_total``.
     """
+
+    if window <= timedelta(0):
+        raise ValueError("window must be positive")
+    if max_out_of_order < timedelta(0):
+        raise ValueError("max_out_of_order must be non-negative")
 
     max_ts: datetime | None = None
     batch: List[Dict[str, Any]] = []
     window_start: datetime | None = None
+    late_counter = get_late_edge_counter(registry)
 
     for event in events:
-        ts = event["ts"]
+        ts = event.get("ts")
+        if not isinstance(ts, datetime):
+            raise ValueError(
+                "Each event must include a datetime 'ts'; got %r for %r"
+                % (ts, event)
+            )
         if max_ts is None or ts > max_ts:
             max_ts = ts
-        watermark = max_ts - max_out_of_order
+        try:
+            watermark = max_ts - max_out_of_order
+        except OverflowError as exc:
+            LOGGER.warning(
+                "Watermark overflow for max_ts=%s and max_out_of_order=%s: %s",
+                max_ts,
+                max_out_of_order,
+                exc,
+            )
+            watermark = datetime.min
 
         if ts < watermark:
-            if LATE_EDGE_TOTAL is not None:  # pragma: no branch - metric optional
-                LATE_EDGE_TOTAL.inc()
+            if late_counter is not None:
+                late_counter.inc()
             if late_sink is not None:
-                late_sink(event)
+                LOGGER.debug(
+                    "Routing late edge %s -> %s at %s to late sink",
+                    event.get("src"),
+                    event.get("dst"),
+                    ts,
+                )
+                try:
+                    late_sink(event)
+                except Exception as exc:
+                    LOGGER.error("Late sink failed for %r: %s", event, exc, exc_info=exc)
             continue
 
         if window_start is None:
@@ -264,8 +319,16 @@ def multiplex_laplacian(
     alpha = np.asarray(alpha, dtype=float)
     if np.any(alpha < 0):
         raise ValueError("alpha_t must be non-negative")
-    if not np.isclose(alpha.sum(), 1.0):
-        alpha = alpha / alpha.sum()
+    alpha_sum = float(alpha.sum())
+    if alpha_sum <= 0.0:
+        if alpha.size == 0:
+            raise ValueError("alpha must contain at least one weight")
+        LOGGER.warning("alpha weights sum to 0, assuming uniform importance")
+        alpha = np.ones_like(alpha) / len(alpha)
+    elif not np.isclose(alpha_sum, 1.0):
+        alpha = alpha / alpha_sum
 
     Ls = [laplacian(B, W) for B, W in zip(B_list, W_list)]
     return sum(a * L for a, L in zip(alpha, Ls))
+
+LATE_EDGE_TOTAL = get_late_edge_counter()

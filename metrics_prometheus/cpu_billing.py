@@ -18,19 +18,39 @@ from __future__ import annotations
 
 from typing import Dict
 
-from prometheus_client import Counter
+from datacreek.utils.deps import optional_import
+
+Counter = optional_import("prometheus_client", "Counter")
+
+
+class _NoopMetric:
+    def labels(self, **kwargs):
+        return self
+
+    def inc(self, amount=1.0):
+        return self
+
+
+def _create_counter(name: str, description: str, labelnames, registry=None):
+    if Counter is None:
+        return _NoopMetric()
+    kwargs = {}
+    if registry is not None:
+        kwargs["registry"] = registry
+    return Counter(name, description, labelnames, **kwargs)
+
 
 # Counter accumulating raw CPU seconds per tenant.  This metric follows the
 # ``*_total`` naming convention so Prometheus exposes
 # ``cpu_seconds_total_total`` as the sample name.
-cpu_seconds_total = Counter(
+cpu_seconds_total = _create_counter(
     "cpu_seconds_total", "CPU seconds consumed per tenant", ["tenant"]
 )
 
 # Counter accumulating the monetary CPU cost per tenant in the configured
 # currency.  Downstream billing dashboards can directly scrape this value to
 # display total charges.
-cpu_cost_total = Counter(
+cpu_cost_total = _create_counter(
     "cpu_cost_total", "Accumulated CPU cost per tenant", ["tenant"]
 )
 

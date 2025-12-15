@@ -34,17 +34,6 @@ from datacreek.models.export_format import ExportFormat
 from datacreek.pipelines import DatasetType
 
 
-class UserCreate(BaseModel):
-    username: constr(min_length=1)
-
-
-class UserOut(BaseModel):
-    id: int
-    username: str
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class SourceCreate(BaseModel):
     path: constr(min_length=1)
     name: str | None = None
@@ -91,10 +80,6 @@ class CurateParams(BaseModel):
 class SaveParams(BaseModel):
     ds_id: int
     fmt: ExportFormat = ExportFormat.JSONL
-
-
-class UserWithKey(UserOut):
-    api_key: str
 
 
 class DatasetCreate(BaseModel):

@@ -18,7 +18,9 @@ except Exception:  # pragma: no cover - optional dependency missing
 try:  # optional dependency for live config reloads
     from watchdog.events import FileSystemEventHandler
     from watchdog.observers import Observer
+    WATCHDOG_AVAILABLE = True
 except Exception:  # pragma: no cover - fallback when watchdog is absent
+    WATCHDOG_AVAILABLE = False
     FileSystemEventHandler = object  # type: ignore[misc]
 
     class _DummyObserver:  # pragma: no cover - lightweight stub
@@ -202,7 +204,7 @@ def get_vllm_settings(config: Dict[str, Any]) -> VLLMSettings:
         {
             "api_base": "http://localhost:8000/v1",
             "port": 8000,
-            "model": "meta-llama/Llama-3.3-70B-Instruct",
+            "model": "gmatilla/Llama-3.3-70B-Instruct",
             "max_retries": 3,
             "retry_delay": 1.0,
         },
@@ -380,7 +382,17 @@ def get_neo4j_config(config: Dict[str, Any]) -> Dict[str, Any]:
 # Global configuration with hot-reload support
 # ---------------------------------------------------------------------------
 
-_config_data: Dict[str, Any] = load_config()  # pragma: no cover - load once at import
+
+def _ensure_config_loaded() -> Dict[str, Any]:
+    """Load the configuration once, reloading the cached copy as needed."""
+
+    global _config_data
+    if _config_data is None:
+        _config_data = load_config()
+    return _config_data
+
+
+_config_data: Dict[str, Any] | None = None
 _config_lock = threading.RLock()
 _config_observer: Observer | None = None
 
@@ -393,7 +405,7 @@ class Config:
         """Return a copy of the current configuration."""
 
         with _config_lock:
-            return dict(_config_data)
+            return dict(_ensure_config_loaded())
 
     @classmethod
     def reload(cls) -> None:
@@ -420,6 +432,10 @@ def start_config_watcher(
     cfg_path: str | os.PathLike | None = None,
 ) -> None:  # pragma: no cover
     """Start watchdog observer reloading the global configuration."""
+
+    if not WATCHDOG_AVAILABLE:
+        logger.debug("watchdog not installed; config watcher disabled")
+        return
 
     global _config_observer
     if _config_observer is not None:

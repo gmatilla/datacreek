@@ -2,8 +2,9 @@
 
 import sys
 import types
+import pytest
 
-import torch
+torch = pytest.importorskip("torch")
 
 from datacreek.parsers.whisper_audio_parser import WhisperAudioParser
 

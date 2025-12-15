@@ -87,7 +87,7 @@ def test_l1_cache_decorator(reload_cache):
     cache.miss = DummyCounter()
     r = DummyRedis()
     cache.redis = r
-    cache.ttl_manager = types.SimpleNamespace(current_ttl=9)
+    cache.get_ttl_manager = lambda **_: types.SimpleNamespace(current_ttl=9)
 
     @cache.l1_cache(lambda x: f"k:{x}")
     def compute(key, *, redis_client=None):

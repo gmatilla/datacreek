@@ -22,7 +22,7 @@ def test_track_embedding_cpu_seconds_increments_counter() -> None:
     with track_embedding_cpu_seconds("alice"):
         sum(i * i for i in range(1000))
     value = REGISTRY.get_sample_value(
-        "embedding_cpu_seconds_total", {"tenant": "alice"}
+        "embedding_wall_seconds_total", {"tenant": "alice"}
     )
     assert value is not None and value > 0
 
@@ -37,7 +37,7 @@ def test_context_manager_updates_cost_when_tracker_provided(monkeypatch) -> None
     with track_embedding_cpu_seconds("alice", tracker):
         pass
     seconds_value = REGISTRY.get_sample_value(
-        "embedding_cpu_seconds_total", {"tenant": "alice"}
+        "embedding_wall_seconds_total", {"tenant": "alice"}
     )
     cost_value = REGISTRY.get_sample_value("cpu_cost_total", {"tenant": "alice"})
     assert seconds_value == 2.0

@@ -76,7 +76,6 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('index') }}">Home</a>
                     </li>
-                    {% if current_user.is_authenticated %}
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('ingest') }}">Ingest Document</a>
                     </li>
@@ -89,14 +88,6 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('datasets') }}">Datasets</a>
                     </li>
-                    {% endif %}
-                </ul>
-                <ul class="navbar-nav ms-auto">
-                    {% if current_user.is_authenticated %}
-                    <li class="nav-item">
-                        <span class="navbar-text me-2">{{ current_user.username }}</span>
-                    </li>
-                    {% endif %}
                 </ul>
             </div>
         </div>

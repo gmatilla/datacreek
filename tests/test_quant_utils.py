@@ -1,7 +1,8 @@
 """Tests for SmoothQuant scale computation and bfloat4 quantization."""
 
 import pytest
-import torch
+
+torch = pytest.importorskip("torch")
 
 from training.quant_utils import quantize_bfloat4, smoothquant_group_scales
 

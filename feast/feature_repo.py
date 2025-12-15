@@ -1,4 +1,4 @@
-"""Feature store definitions and cache utilities for embedding vectors.
+r"""Feature store definitions and cache utilities for embedding vectors.
 
 This module configures a minimal Feast repository with a single entity and
 feature view.  The entity ``embedding_hash`` uniquely identifies an embedding

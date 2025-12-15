@@ -5,13 +5,13 @@ import pytest
 
 from datacreek.core.knowledge_graph import (
     KnowledgeGraph,
-    _load_cleanup,
     apply_cleanup_config,
     get_cleanup_cfg,
     start_cleanup_watcher,
     stop_cleanup_watcher,
     verify_thresholds,
 )
+from datacreek.core.knowledge_graph.watchdog import _load_cleanup
 
 
 def test_knowledge_graph_basic(tmp_path, monkeypatch):
@@ -41,7 +41,7 @@ def test_knowledge_graph_basic(tmp_path, monkeypatch):
     kg.add_chunk(
         "doc",
         "chunk1",
-        "<i>Chunk1</i>",
+        " <i>Chunk1</i> ",
         section_id="sec1",
         emotion="joy",
         modality="text",

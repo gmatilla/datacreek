@@ -11,18 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-spec = importlib.util.spec_from_file_location(
-    "datacreek.analysis.hybrid_ann",
-    (
-        Path(__file__).resolve().parents[1]
-        / "datacreek"
-        / "analysis"
-        / "hybrid_ann.py"  # noqa: E501
-    ),
-)
-hybrid_ann = importlib.util.module_from_spec(spec)
-assert isinstance(spec.loader, importlib.abc.Loader)  # noqa: S101
-spec.loader.exec_module(hybrid_ann)
+from datacreek.analysis import hybrid_ann
 
 
 @pytest.mark.faiss_gpu
@@ -106,7 +95,7 @@ def test_hybrid_ann_bench(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location(
         "bench_hybrid_ann",
         (
-            Path(__file__).resolve().parents[1]
+            Path(__file__).resolve().parents[2]
             / "scripts"
             / "bench_hybrid_ann.py"  # noqa: E501
         ),
@@ -140,7 +129,7 @@ def test_bench_ann_cpu_script(tmp_path, monkeypatch):
     """Ensure CPU benchmark script writes expected metrics."""
     spec = importlib.util.spec_from_file_location(
         "bench_ann_cpu",
-        Path(__file__).resolve().parents[1] / "scripts" / "bench_ann_cpu.py",
+        Path(__file__).resolve().parents[2] / "scripts" / "bench_ann_cpu.py",
     )
     bench = importlib.util.module_from_spec(spec)
     assert isinstance(spec.loader, importlib.abc.Loader)
@@ -162,7 +151,7 @@ def test_run_bench_sets_threads(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "bench_hybrid_ann",
-        Path(__file__).resolve().parents[1] / "scripts" / "bench_hybrid_ann.py",
+        Path(__file__).resolve().parents[2] / "scripts" / "bench_hybrid_ann.py",
     )
     bench = importlib.util.module_from_spec(spec)
     assert isinstance(spec.loader, importlib.abc.Loader)

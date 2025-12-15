@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location(
     "flyway_dry_run",
-    Path(__file__).resolve().parents[1] / "scripts" / "flyway_dry_run.py",
+    Path(__file__).resolve().parents[2] / "scripts" / "flyway_dry_run.py",
 )
 flyway_dry_run = importlib.util.module_from_spec(spec)
 assert isinstance(spec.loader, importlib.abc.Loader)

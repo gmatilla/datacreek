@@ -2,12 +2,16 @@ from __future__ import annotations
 
 """Audio validator with adaptive SNR threshold."""
 
+import logging
+import struct
 from collections import deque
 from typing import Deque
 
 from datacreek.analysis import monitoring
 
 from .quality_metrics import audio_snr, dynamic_snr_threshold
+
+LOGGER = logging.getLogger(__name__)
 
 __all__ = ["AudioValidator"]
 
@@ -35,6 +39,19 @@ class AudioValidator:
     def __init__(self, window: int = 500) -> None:
         self.history: Deque[float] = deque(maxlen=window)
 
+    def _validate_pcm(self, pcm: bytes) -> None:
+        """Ensure PCM length is even and not empty."""
+
+        if not pcm:
+            raise ValueError("PCM payload is empty")
+        if len(pcm) % 2 != 0:
+            raise ValueError("PCM payload must contain 16-bit samples")
+        # Ensure we have at least one sample by unpacking first value
+        try:
+            struct.unpack_from("<h", pcm, 0)
+        except struct.error as exc:
+            raise ValueError("PCM payload is malformed") from exc
+
     def validate(self, pcm: bytes) -> bool:
         """Return ``True`` if ``pcm`` passes the dynamic SNR threshold.
 
@@ -43,7 +60,18 @@ class AudioValidator:
         ``pcm`` is expected to contain 16-bit mono PCM samples.
         """
 
-        snr = audio_snr(pcm)
+        try:
+            self._validate_pcm(pcm)
+        except ValueError as exc:
+            LOGGER.warning("Audio validation skipped: %s", exc)
+            return False
+
+        try:
+            snr = audio_snr(pcm)
+        except Exception as exc:
+            LOGGER.exception("Failed to compute SNR for audio chunk")
+            return False
+
         threshold = dynamic_snr_threshold(self.history)
         try:  # optional Prometheus metric
             monitoring.update_metric("snr_dynamic_thr", threshold)

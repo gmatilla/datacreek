@@ -10,7 +10,11 @@ import time
 from typing import Sequence
 
 import numpy as np
-from skopt import Optimizer
+try:
+    from skopt import Optimizer
+except Exception:
+    Optimizer = None
+
 
 try:
     import faiss  # type: ignore
@@ -64,6 +68,9 @@ def autotune_nprobe(
     """
     if faiss is None:
         raise RuntimeError("faiss not installed")
+    if Optimizer is None:
+        raise RuntimeError("scikit-optimize (skopt) not installed or broken")
+
 
     flat = faiss.IndexFlatIP(xb.shape[1])
     flat.add(xb)

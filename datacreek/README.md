@@ -288,7 +288,7 @@ Objectif : **améliorer la pertinence et la robustesse** du RAG au-delà du cos
 
 ## Observabilité & qualité
 
-* **Prometheus** : compteurs/jauges dans `analysis/monitoring.py` (ex. `embedding_cpu_seconds_total`, `ann_latency`, entropies, coûts auto‑tuning…).
+* **Prometheus** : compteurs/jauges dans `analysis/monitoring.py` (ex. `embedding_wall_seconds_total` / `embedding_cpu_seconds_total`, `ann_latency`, entropies, coûts auto‑tuning…).
 * **Curation humaine** : `edge_review.py` (FastAPI) — liste des arêtes avec fort (\Delta\lambda), **accept/reject** ; journalisation en mémoire + écriture Neo4j (si configuré).
 * **Explicabilité** : `explain_router.py` — sous‑graphes commentés, attention & SVG.
 * **Politiques** : `core/dataset_*` — `Policy`, `HistoryEvent` ; **DP budget** (middleware + accountant Renyi) pour limiter l’usage.

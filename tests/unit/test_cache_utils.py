@@ -55,7 +55,9 @@ def test_l1_cache_hit_and_miss(monkeypatch):
 
     fake_redis = FakeRedis()
     monkeypatch.setattr(cache, "redis", fake_redis)
-    monkeypatch.setattr(cache, "ttl_manager", SimpleNamespace(current_ttl=42))
+    monkeypatch.setattr(
+        cache, "get_ttl_manager", lambda **_: SimpleNamespace(current_ttl=42)
+    )
     hit = DummyMetric()
     miss = DummyMetric()
     monkeypatch.setattr(cache, "hits", hit)

@@ -11,7 +11,7 @@ def test_bench_whisper_xrt(tmp_path, monkeypatch):
     """Run the benchmark script with a dummy parser to verify output."""
     spec = importlib.util.spec_from_file_location(
         "bench_whisper_xrt",
-        Path(__file__).resolve().parents[1] / "scripts" / "bench_whisper_xrt.py",
+        Path(__file__).resolve().parents[2] / "scripts" / "bench_whisper_xrt.py",
     )
     bench = importlib.util.module_from_spec(spec)
     assert isinstance(spec.loader, importlib.abc.Loader)

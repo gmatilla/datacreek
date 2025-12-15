@@ -15,7 +15,15 @@ from pathlib import Path
 from typing import Dict, Iterable, Tuple
 
 import numpy as np
-from sklearn.cross_decomposition import CCA
+try:
+    from sklearn.cross_decomposition import CCA
+except ImportError:
+    CCA = None
+try:
+    from sklearn.decomposition import PCA
+except ImportError:
+    PCA = None
+
 
 # Base directory for cached artifacts
 CACHE_ROOT = os.environ.get("DATACREEK_CACHE", "./cache")
@@ -112,7 +120,11 @@ def aligned_cca(
     """
     nodes = n2v.keys() & gw.keys()
     if not nodes:
+        if CCA is None:
+             raise ImportError("sklearn.cross_decomposition required for CCA")
         return {}, CCA(n_components=n_components)
+    if CCA is None:
+        raise ImportError("sklearn.cross_decomposition required for aligned_cca")
     X = np.vstack([np.asarray(n2v[n], dtype=float) for n in nodes])
     Y = np.vstack([np.asarray(gw[n], dtype=float) for n in nodes])
     cca = CCA(n_components=n_components)
@@ -302,11 +314,17 @@ def meta_autoencoder(
 ) -> Tuple[Dict[object, np.ndarray], Dict[object, np.ndarray]]:
     """Return meta-embeddings and reconstructions with a simple linear autoencoder."""
 
-    from sklearn.decomposition import PCA
+    # from sklearn.decomposition import PCA  <-- removed local import
 
     nodes = n2v.keys() & gw.keys() & hyp.keys()
     if not nodes:
         return {}, {}
+    
+    if PCA is None:
+        try:
+             from sklearn.decomposition import PCA
+        except ImportError:
+             raise ImportError("sklearn.decomposition required for meta_autoencoder")
 
     X = [
         np.concatenate(

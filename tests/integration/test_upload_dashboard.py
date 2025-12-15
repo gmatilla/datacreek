@@ -12,7 +12,7 @@ import os
 
 spec = importlib.util.spec_from_file_location(
     "upload_dashboard",
-    Path(__file__).resolve().parents[1] / "scripts" / "upload_dashboard.py",
+    Path(__file__).resolve().parents[2] / "scripts" / "upload_dashboard.py",
 )
 os.environ["GRAFANA_URL"] = "http://grafana"
 os.environ["GRAFANA_TOKEN"] = "tok"
@@ -23,7 +23,7 @@ spec.loader.exec_module(upload_dashboard)
 
 def test_validate_dashboard_metrics():
     path = (
-        Path(__file__).resolve().parents[1] / "docs" / "grafana" / "cache_overview.json"
+        Path(__file__).resolve().parents[2] / "docs" / "grafana" / "cache_overview.jsonnet"
     )
     data = upload_dashboard.validate_dashboard(path)
     text = json.dumps(data)
@@ -47,7 +47,7 @@ def test_upload_dashboard(monkeypatch):
 
     monkeypatch.setattr(upload_dashboard.requests, "post", fake_post)
     path = (
-        Path(__file__).resolve().parents[1] / "docs" / "grafana" / "cache_overview.json"
+        Path(__file__).resolve().parents[2] / "docs" / "grafana" / "cache_overview.jsonnet"
     )
     upload_dashboard.upload(path)
     assert calls["url"] == "http://grafana/api/dashboards/db"

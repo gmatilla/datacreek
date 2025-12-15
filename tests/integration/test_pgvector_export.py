@@ -15,18 +15,7 @@ import networkx as nx
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-spec = importlib.util.spec_from_file_location(
-    "datacreek.plugins.pgvector_export",
-    Path(__file__).resolve().parents[1]
-    / "datacreek"
-    / "plugins"
-    / "pgvector_export.py",
-)
-pgvector_export = importlib.util.module_from_spec(spec)
-assert isinstance(spec.loader, importlib.abc.Loader)
-spec.loader.exec_module(pgvector_export)
+from datacreek.plugins import pgvector_export
 
 
 class DummyKG:

@@ -7,23 +7,11 @@ import time
 from functools import lru_cache
 from typing import Iterable, List
 
-try:  # optional 8-bit matmul for CPU acceleration
-    import bitsandbytes.functional as bnb_fn  # type: ignore
-except Exception:  # pragma: no cover - dependency missing
-    bnb_fn = None  # type: ignore
+from datacreek.utils.deps import optional_import
 
-# Avoid importing torch on unsupported platforms to prevent crashes
-torch = None  # default to disabled
-try:  # optional dependency (disabled by default)
-    if False:
-        import torch  # pragma: no cover
-except Exception:  # pragma: no cover
-    torch = None  # type: ignore
-
-try:  # optional heavy dependency
-    from whispercpp import Whisper  # type: ignore
-except Exception:  # pragma: no cover - dependency missing
-    Whisper = None  # type: ignore
+bnb_fn = optional_import("bitsandbytes.functional")
+torch = optional_import("torch")
+Whisper = optional_import("whispercpp", attr="Whisper")
 
 __all__ = ["transcribe_audio_batch"]
 

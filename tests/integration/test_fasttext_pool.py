@@ -3,12 +3,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 
-spec = importlib.util.spec_from_file_location(
-    "datacreek.utils.text", root / "datacreek" / "utils" / "text.py"
-)
-text = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-spec.loader.exec_module(text)
+from datacreek.utils import text
 
 
 def test_fasttext_pool_single_load(monkeypatch):

@@ -27,11 +27,22 @@ jobs:
           python-version: '3.12'
       - name: Set commit SHA
         run: echo "GIT_SHA=${GITHUB_SHA}" >> $GITHUB_ENV
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '20'
       - run: |
           pip install -r requirements.txt -r requirements-ci.txt \
             flask flask-wtf flask-login wtforms pre-commit pytest requests \
             python-dateutil rich scikit-learn watchdog PyYAML pydantic==2.4.0 \
             boto3 httpx mypy jsonnet-binary
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm run build
       - id: diff
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -157,6 +168,8 @@ jobs:
           context: ./frontend
           push: ${{ github.ref == 'refs/heads/main' }}
           tags: ghcr.io/${{ env.FRONTEND_IMAGE_NAME }}:latest
+      - name: Build cron image
+        run: docker build -f cron/Dockerfile -t datacreek/cron:latest .
   deploy:
     needs: docker-build
     if: github.ref == 'refs/heads/main'

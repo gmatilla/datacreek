@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import List, Tuple
 
 try:
@@ -9,6 +10,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     webrtcvad = None  # type: ignore
 
+LOGGER = logging.getLogger(__name__)
 
 __all__ = ["split_on_silence"]
 
@@ -36,7 +38,12 @@ def split_on_silence(
     """
 
     if webrtcvad is None:  # pragma: no cover - optional dependency
-        raise ImportError("webrtcvad is required for audio chunking")
+        LOGGER.warning(
+            "webrtcvad missing; returning a single chunk for %.2fs audio",
+            len(pcm) / (2 * sample_rate) if sample_rate else 0.0,
+        )
+        duration_ms = len(pcm) / (2 * sample_rate) * 1000 if sample_rate else 0
+        return [(0.0, duration_ms / 1000.0)]
 
     vad = webrtcvad.Vad(3)
     frame_len = int(sample_rate * frame_ms / 1000) * 2  # bytes per frame

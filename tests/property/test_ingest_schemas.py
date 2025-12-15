@@ -8,7 +8,7 @@ pytest.importorskip("hypothesis")
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from schemas import AudioIngest, ImageIngest, PdfIngest
+from datacreek.ingest_schemas import AudioIngest, ImageIngest, PdfIngest
 
 
 @given(

@@ -1,4 +1,4 @@
-"""Embedding drift detection utilities.
+r"""Embedding drift detection utilities.
 
 This module tracks the kernel mean :math:`\mu_0` of baseline validation
 embeddings and measures distributional drift after fine-tuning via a simple
@@ -17,15 +17,43 @@ alerts can trigger when drift exceeds a threshold.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+import logging
 
 import numpy as np
 
 from .monitoring import update_metric
 
+LOGGER = logging.getLogger(__name__)
+
+
+def _ensure_matrix(array: np.ndarray, name: str) -> None:
+    if array.ndim != 2:
+        msg = f"{name} must be a 2D array; got shape {array.shape}"
+        LOGGER.error(msg)
+        raise ValueError(msg)
+    if array.shape[0] == 0:
+        msg = f"{name} must contain at least one sample"
+        LOGGER.error(msg)
+        raise ValueError(msg)
+    if array.shape[1] == 0:
+        msg = f"{name} must contain at least one feature"
+        LOGGER.error(msg)
+        raise ValueError(msg)
+
+
+def _ensure_vector(array: np.ndarray, name: str) -> None:
+    if array.ndim != 1:
+        msg = f"{name} must be a 1D vector; got shape {array.shape}"
+        LOGGER.error(msg)
+        raise ValueError(msg)
+    if array.shape[0] == 0:
+        msg = f"{name} must contain at least one feature"
+        LOGGER.error(msg)
+        raise ValueError(msg)
+
 
 def baseline_mean(embeddings: np.ndarray) -> np.ndarray:
-    """Return the baseline kernel mean :math:`\mu_0`.
+    r"""Return the baseline kernel mean :math:`\mu_0`.
 
     Parameters
     ----------
@@ -38,11 +66,12 @@ def baseline_mean(embeddings: np.ndarray) -> np.ndarray:
         Mean vector of shape ``(d,)``.
     """
 
+    _ensure_matrix(embeddings, "embeddings")
     return embeddings.mean(axis=0)
 
 
 def embedding_mmd(new_embeddings: np.ndarray, mu0: np.ndarray) -> float:
-    """Compute squared MMD between ``new_embeddings`` and ``mu0``.
+    r"""Compute squared MMD between ``new_embeddings`` and ``mu0``.
 
     Parameters
     ----------
@@ -57,6 +86,15 @@ def embedding_mmd(new_embeddings: np.ndarray, mu0: np.ndarray) -> float:
         Squared MMD value :math:`\|\mu_{\text{new}} - \mu_0\|_2^2`.
     """
 
+    _ensure_matrix(new_embeddings, "new_embeddings")
+    _ensure_vector(mu0, "mu0")
+    if new_embeddings.shape[1] != mu0.shape[0]:
+        msg = (
+            "New embeddings and mu0 must share the same feature dimension "
+            f"({new_embeddings.shape[1]} != {mu0.shape[0]})"
+        )
+        LOGGER.error(msg)
+        raise ValueError(msg)
     mu_new = new_embeddings.mean(axis=0)
     delta = mu_new - mu0
     mmd2 = float(np.dot(delta, delta))

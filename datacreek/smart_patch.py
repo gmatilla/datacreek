@@ -1,13 +1,55 @@
 from __future__ import annotations
 
+import json
+import logging
+import os
+import threading
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple
+from pathlib import Path
+from typing import Dict, List, Sequence, Tuple
 from uuid import uuid4
 
-from ortools.linear_solver import pywraplp
+from datacreek.utils.deps import optional_import
+
+pywraplp = optional_import("ortools.linear_solver.pywraplp")
+
+logger = logging.getLogger(__name__)
+
+_STORAGE_DIR = Path(
+    os.getenv("SMART_PATCH_STORAGE", Path(__file__).resolve().parent / ".." / "cache")
+).resolve()
+_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+_PATCHSET_FILE = _STORAGE_DIR / "patchsets.json"
+_PATCHSET_LOCK = threading.RLock()
+
+
+def _load_patchsets() -> Dict[str, List[str]]:
+    if not _PATCHSET_FILE.exists():
+        return {}
+    try:
+        return json.loads(_PATCHSET_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        logger.exception("Failed to load patchsets from %s", _PATCHSET_FILE)
+        return {}
+
+
+def _persist_patchsets(data: Dict[str, List[str]]) -> None:
+    try:
+        _PATCHSET_FILE.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        logger.exception("Failed to persist patchsets to %s", _PATCHSET_FILE)
+
 
 # Global registry storing chosen patch sets by opaque identifier.
-PATCHSET_REGISTRY: dict[str, List[str]] = {}
+PATCHSET_REGISTRY: Dict[str, List[str]] = _load_patchsets()
+
+
+def _register_patchset(patchset_id: str, selected: List[str]) -> None:
+    with _PATCHSET_LOCK:
+        PATCHSET_REGISTRY[patchset_id] = selected
+        _persist_patchsets(PATCHSET_REGISTRY)
 
 
 @dataclass(frozen=True)
@@ -57,6 +99,8 @@ def solve_patch_ilp(
         The patch set identifier and the list of selected edge ids.
     """
 
+    if pywraplp is None:
+        raise RuntimeError("ortools.linear_solver.pywraplp is unavailable")
     solver = pywraplp.Solver.CreateSolver("SCIP")
     if solver is None:  # pragma: no cover - solver missing in environment
         raise RuntimeError("SCIP solver is not available")
@@ -86,5 +130,5 @@ def solve_patch_ilp(
         if edge_vars[cand.edge_id].solution_value() > 0.5
     ]
     patchset_id = uuid4().hex
-    PATCHSET_REGISTRY[patchset_id] = selected
+    _register_patchset(patchset_id, selected)
     return patchset_id, selected

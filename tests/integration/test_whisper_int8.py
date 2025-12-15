@@ -30,7 +30,7 @@ def test_whisper_int8_cpu(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "whisper_batch",
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "datacreek"
         / "utils"
         / "whisper_batch.py",

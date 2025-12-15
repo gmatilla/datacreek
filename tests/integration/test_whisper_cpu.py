@@ -1,13 +1,10 @@
 import sys
 import types
-
+import unittest.mock
+import importlib 
 import pytest
 
-# Provide stub modules to avoid heavy imports
-sys.modules.setdefault("transformers", types.ModuleType("transformers"))
-
-
-# Stub monitoring module to avoid importing the whole package
+# Stub monitoring module to capture metrics
 def _update_metric(name: str, value: float, labels=None):
     g = mon_stub._METRICS.get(name)
     if g is not None:
@@ -16,39 +13,32 @@ def _update_metric(name: str, value: float, labels=None):
         else:
             g.set(value)
 
-
 mon_stub = types.SimpleNamespace(
     whisper_xrt=None,
     _METRICS={"whisper_xrt": None},
     update_metric=_update_metric,
     whisper_fallback_total=None,
 )
-# Stub datacreek package hierarchy so imports in whisper_batch resolve
-dc_stub = types.ModuleType("datacreek")
-analysis_stub = types.ModuleType("datacreek.analysis")
-analysis_stub.monitoring = mon_stub
-dc_stub.analysis = analysis_stub
-sys.modules.setdefault("datacreek", dc_stub)
-sys.modules.setdefault("datacreek.analysis", analysis_stub)
-sys.modules.setdefault("datacreek.analysis.monitoring", mon_stub)
 
-import importlib.util
-from pathlib import Path
-
-spec = importlib.util.spec_from_file_location(
-    "whisper_batch",
-    Path(__file__).resolve().parents[1] / "datacreek" / "utils" / "whisper_batch.py",
-)
-whisper_batch = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-spec.loader.exec_module(whisper_batch)
-# remove stub modules so other tests can import real package
-sys.modules.pop("datacreek.analysis.monitoring", None)
-sys.modules.pop("datacreek.analysis", None)
-sys.modules.pop("datacreek", None)
+@pytest.fixture(scope="module")
+def whisper_module():
+    """Load whisper_batch with mocked dependencies."""
+    # Stub transformers and datacreek monitoring
+    mock_modules = {
+        "transformers": types.ModuleType("transformers"),
+        "datacreek.analysis.monitoring": mon_stub,
+    }
+    
+    with unittest.mock.patch.dict(sys.modules, mock_modules):
+        from datacreek.utils import whisper_batch
+        importlib.reload(whisper_batch)
+        yield whisper_batch
 
 
-def test_cpu_route(monkeypatch):
+
+
+
+def test_cpu_route(monkeypatch, whisper_module):
     class DummyModel:
         def __init__(self):
             self.calls = []
@@ -57,9 +47,10 @@ def test_cpu_route(monkeypatch):
             self.calls.append(path)
             return "ok"
 
-    monkeypatch.setattr(whisper_batch, "_get_model", lambda *a, **k: DummyModel())
+    monkeypatch.setattr(whisper_module, "_get_model", lambda *a, **k: DummyModel())
+    # Mock torch here since it is imported inside the module or used from it
     monkeypatch.setattr(
-        whisper_batch,
+        whisper_module,
         "torch",
         type(
             "T",
@@ -81,17 +72,20 @@ def test_cpu_route(monkeypatch):
     gauge = DummyGauge()
     mon_stub.whisper_xrt = gauge
     mon_stub._METRICS["whisper_xrt"] = gauge
-    sys.modules["datacreek.analysis.monitoring"] = mon_stub
-
-    result = whisper_batch.transcribe_audio_batch(["a.wav"], batch_size=4)
-    sys.modules.pop("datacreek.analysis.monitoring", None)
+    
+    # Ensure monitoring in sys.modules is consistent for the test execution if needed,
+    # but the module already holds reference to mon_stub via import.
+    
+    result = whisper_module.transcribe_audio_batch(["a.wav"], batch_size=4)
+    # No need to pop, handled by cleanup/fixture usually, but here we modify valid dict
+    
     assert result == ["ok"]
     assert vals.get("device") == "cpu"
     assert vals["xrt"] <= 1.5
 
 
 @pytest.mark.gpu
-def test_gpu_route(monkeypatch):
+def test_gpu_route(monkeypatch, whisper_module):
     class DummyModel:
         def __init__(self):
             self.calls = []
@@ -100,9 +94,9 @@ def test_gpu_route(monkeypatch):
             self.calls.append(path)
             return "ok"
 
-    monkeypatch.setattr(whisper_batch, "_get_model", lambda *a, **k: DummyModel())
+    monkeypatch.setattr(whisper_module, "_get_model", lambda *a, **k: DummyModel())
     monkeypatch.setattr(
-        whisper_batch,
+        whisper_module,
         "torch",
         type(
             "T",
@@ -112,7 +106,7 @@ def test_gpu_route(monkeypatch):
     )
 
     ticks = [0.0, 0.1]
-    monkeypatch.setattr(whisper_batch.time, "perf_counter", lambda: ticks.pop(0))
+    monkeypatch.setattr(whisper_module.time, "perf_counter", lambda: ticks.pop(0))
 
     vals = {}
 
@@ -127,10 +121,9 @@ def test_gpu_route(monkeypatch):
     gauge = DummyGauge()
     mon_stub.whisper_xrt = gauge
     mon_stub._METRICS["whisper_xrt"] = gauge
-    sys.modules["datacreek.analysis.monitoring"] = mon_stub
 
-    result = whisper_batch.transcribe_audio_batch(["a.wav"], batch_size=4)
-    sys.modules.pop("datacreek.analysis.monitoring", None)
+    result = whisper_module.transcribe_audio_batch(["a.wav"], batch_size=4)
     assert result == ["ok"]
     assert vals.get("device") == "cuda"
     assert vals["xrt"] <= 0.5
+

@@ -23,15 +23,7 @@ from flask import (
     request,
     url_for,
 )
-from flask_login import (
-    LoginManager,
-    current_user,
-    login_required,
-    login_user,
-    logout_user,
-)
 from flask_wtf import FlaskForm
-from werkzeug.security import check_password_hash, generate_password_hash
 from wtforms import (
     FileField,
     IntegerField,
@@ -52,12 +44,11 @@ from datacreek.core.dataset import DatasetBuilder
 from datacreek.core.ingest import ingest_into_dataset
 from datacreek.core.ingest import process_file as ingest_process_file
 from datacreek.core.knowledge_graph import KnowledgeGraph
-from datacreek.db import SessionLocal, User, init_db
+from datacreek.db import SessionLocal, init_db
 from datacreek.models.export_format import ExportFormat
 from datacreek.models.llm_client import LLMClient
 from datacreek.models.stage import DatasetStage
 from datacreek.pipelines import DatasetType
-from datacreek.services import generate_api_key, hash_key
 from datacreek.tasks import (
     dataset_cleanup_task,
     dataset_delete_task,
@@ -82,43 +73,99 @@ STATIC_DIR = Path(__file__).parents[2] / "frontend" / "dist"
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/")
 app.config["SECRET_KEY"] = os.urandom(24)
 
-login_manager = LoginManager(app)
-login_manager.login_view = None
+
+# Load SDK config lazily
+CONFIG_CACHE: Dict[str, Any] | None = None
+_DB_INITIALIZED = False
+_REDIS_CLIENT = None
+REDIS: Any | None = None
 
 
-@login_manager.unauthorized_handler
-def unauthorized():
-    return jsonify({"error": "login required"}), 401
+def get_app_config() -> Dict[str, Any]:
+    """Return the cached SDK config, loading it once on demand."""
+    global CONFIG_CACHE
+    if CONFIG_CACHE is None:
+        CONFIG_CACHE = load_config()
+    return CONFIG_CACHE
 
 
-# Load SDK config
-config = load_config()
-init_db()
+def ensure_db_initialized() -> None:
+    """Initialize the database once per process."""
+    global _DB_INITIALIZED
+    if not _DB_INITIALIZED:
+        init_db()
+        _DB_INITIALIZED = True
+
+
+def ensure_redis_connection() -> None:
+    """Create or refresh the cached Redis client."""
+    global REDIS
+    if REDIS is None:
+        REDIS = get_redis_client()
+
+
+def ensure_app_ready() -> None:
+    """Ensure config, DB and Redis are initialized."""
+    get_app_config()
+    ensure_db_initialized()
+    ensure_redis_connection()
 
 
 def get_redis_client():
     """Return a Redis client using backend helpers."""
+    global _REDIS_CLIENT, REDIS
+    if REDIS is not None:
+        ping = getattr(REDIS, "ping", None)
+        if callable(ping):
+            try:
+                ping()
+                return REDIS
+            except Exception:
+                logger.exception("Cached global Redis client disconnected")
+                REDIS = None
+        else:
+            return REDIS
+    if _REDIS_CLIENT:
+        try:
+            _REDIS_CLIENT.ping()
+            return _REDIS_CLIENT
+        except Exception:
+            logger.exception("Cached Redis client disconnected")
+            _REDIS_CLIENT = None
     try:
         client = backend_get_redis_client()
         client.ping()
+        _REDIS_CLIENT = client
+        REDIS = client
         return client
     except Exception:
         logger.exception("Failed to connect to Redis")
         return None
 
 
-REDIS = get_redis_client()
+
+_startup_hook_executed = False
+
+@app.before_request
+def _startup_hook():
+    """Prepare runtime resources before serving requests."""
+    global _startup_hook_executed
+    if not _startup_hook_executed:
+        ensure_app_ready()
+        _startup_hook_executed = True
+
 
 
 def load_datasets_from_redis() -> None:
     """Populate ``DATASETS`` from Redis if available."""
-    if not REDIS:
+    client = get_redis_client()
+    if not client:
         return
-    for name in REDIS.smembers("datasets"):
+    for name in client.smembers("datasets"):
         try:
             driver = get_neo4j_driver()
-            ds = DatasetBuilder.from_redis(REDIS, f"dataset:{name}", driver)
-            ds.redis_client = REDIS
+            ds = DatasetBuilder.from_redis(client, f"dataset:{name}", driver)
+            ds.redis_client = client
             ds.neo4j_driver = driver
             DATASETS[name] = ds
         except KeyError:
@@ -131,13 +178,14 @@ def load_datasets_from_redis() -> None:
 
 def load_graphs_from_redis() -> None:
     """Populate ``GRAPHS`` from Redis if available."""
-    if not REDIS:
+    client = get_redis_client()
+    if not client:
         return
-    for name in REDIS.smembers("graphs"):
+    for name in client.smembers("graphs"):
         try:
             driver = get_neo4j_driver()
-            ds = DatasetBuilder.from_redis(REDIS, f"graph:{name}", driver)
-            ds.redis_client = REDIS
+            ds = DatasetBuilder.from_redis(client, f"graph:{name}", driver)
+            ds.redis_client = client
             ds.neo4j_driver = driver
             GRAPHS[name] = ds
         except KeyError:
@@ -147,10 +195,7 @@ def load_graphs_from_redis() -> None:
 # defer graph loading until accessed to keep startup fast
 
 
-@login_manager.user_loader
-def load_user(user_id: str) -> User | None:
-    with SessionLocal() as db:
-        return db.get(User, int(user_id))
+
 
 
 def get_neo4j_driver():
@@ -170,24 +215,13 @@ def get_dataset(name: str) -> DatasetBuilder | None:
     """Return dataset ``name`` loading from Redis if necessary."""
     ds = DATASETS.get(name)
     if ds:
-        if current_user.is_authenticated and ds.owner_id not in {None, current_user.id}:
-            return None
         return ds
     if REDIS:
-        if current_user.is_authenticated:
-            key = f"user:{current_user.id}:datasets"
-            if REDIS.exists(key) and not REDIS.sismember(key, name):
-                return None
         try:
             driver = get_neo4j_driver()
             ds = DatasetBuilder.from_redis(REDIS, f"dataset:{name}", driver)
             ds.redis_client = REDIS
             ds.neo4j_driver = driver
-            if current_user.is_authenticated and ds.owner_id not in {
-                None,
-                current_user.id,
-            }:
-                return None
             DATASETS[name] = ds
             return ds
         except KeyError:
@@ -197,52 +231,33 @@ def get_dataset(name: str) -> DatasetBuilder | None:
 
 def save_dataset(ds: DatasetBuilder) -> None:
     """Persist ``ds`` to Redis if available."""
-    if REDIS:
-        ds.redis_client = REDIS
-        ds.to_redis(REDIS, f"dataset:{ds.name}")
-        REDIS.sadd("datasets", ds.name)
-        if ds.owner_id is not None:
-            REDIS.sadd(f"user:{ds.owner_id}:datasets", ds.name)
+    client = get_redis_client()
+    if client:
+        ds.redis_client = client
+        ds.to_redis(client, f"dataset:{ds.name}")
+        client.sadd("datasets", ds.name)
 
 
 def delete_dataset_persist(name: str) -> None:
     """Remove dataset ``name`` from Redis."""
-    if REDIS:
-        raw = REDIS.get(f"dataset:{name}")
-        owner = None
-        if raw:
-            try:
-                owner = json.loads(raw).get("owner_id")
-            except Exception:
-                pass
-        REDIS.delete(f"dataset:{name}")
-        REDIS.srem("datasets", name)
-        if owner is not None:
-            REDIS.srem(f"user:{owner}:datasets", name)
+    client = get_redis_client()
+    if client:
+        client.delete(f"dataset:{name}")
+        client.srem("datasets", name)
 
 
 def get_graph(name: str) -> DatasetBuilder | None:
     """Return knowledge graph ``name`` loading from Redis if necessary."""
     ds = GRAPHS.get(name)
     if ds:
-        if current_user.is_authenticated and ds.owner_id not in {None, current_user.id}:
-            return None
         return ds
-    if REDIS:
-        if current_user.is_authenticated:
-            key = f"user:{current_user.id}:graphs"
-            if REDIS.exists(key) and not REDIS.sismember(key, name):
-                return None
+    client = get_redis_client()
+    if client:
         try:
             driver = get_neo4j_driver()
-            ds = DatasetBuilder.from_redis(REDIS, f"graph:{name}", driver)
-            ds.redis_client = REDIS
+            ds = DatasetBuilder.from_redis(client, f"graph:{name}", driver)
+            ds.redis_client = client
             ds.neo4j_driver = driver
-            if current_user.is_authenticated and ds.owner_id not in {
-                None,
-                current_user.id,
-            }:
-                return None
             GRAPHS[name] = ds
             return ds
         except KeyError:
@@ -252,29 +267,20 @@ def get_graph(name: str) -> DatasetBuilder | None:
 
 def save_graph(ds: DatasetBuilder) -> None:
     """Persist ``ds`` under the ``graph:`` prefix in Redis."""
-    if REDIS:
-        ds.redis_client = REDIS
-        ds.to_redis(REDIS, f"graph:{ds.name}")
-        REDIS.sadd("graphs", ds.name)
-        if ds.owner_id is not None:
-            REDIS.sadd(f"user:{ds.owner_id}:graphs", ds.name)
+    client = get_redis_client()
+    if client:
+        ds.redis_client = client
+        ds.to_redis(client, f"graph:{ds.name}")
+        client.sadd("graphs", ds.name)
 
 
 def delete_graph_persist(name: str) -> None:
     """Remove graph ``name`` from Redis."""
-    if REDIS:
-        raw = REDIS.get(f"graph:{name}")
-        owner = None
-        if raw:
-            try:
-                owner = json.loads(raw).get("owner_id")
-            except Exception:
-                pass
-        for key in list(REDIS.scan_iter(match=f"graph:{name}*")):
-            REDIS.delete(key)
-        REDIS.srem("graphs", name)
-        if owner is not None:
-            REDIS.srem(f"user:{owner}:graphs", name)
+    client = get_redis_client()
+    if client:
+        for key in list(client.scan_iter(match=f"graph:{name}*")):
+            client.delete(key)
+        client.srem("graphs", name)
 
 
 # Forms
@@ -346,83 +352,23 @@ class DatasetForm(FlaskForm):
 # API Routes
 
 
-@app.post("/api/login")
-def api_login():
-    data = request.get_json() or {}
-    username = data.get("username")
-    password = data.get("password")
-    if not username or not password:
-        return jsonify({"error": "missing credentials"}), 400
-    with SessionLocal() as db:
-        user = db.query(User).filter_by(username=username).first()
-        if user and check_password_hash(user.password_hash, password):
-            login_user(user)
-            return jsonify({"message": "logged in"})
-    return jsonify({"error": "invalid credentials"}), 401
 
-
-@app.post("/api/logout")
-@login_required
-def api_logout():
-    logout_user()
-    return jsonify({"message": "logged out"})
-
-
-@app.post("/api/register")
-def api_register():
-    data = request.get_json() or {}
-    username = data.get("username")
-    password = data.get("password")
-    if not username or not password:
-        return jsonify({"error": "missing credentials"}), 400
-    with SessionLocal() as db:
-        if db.query(User).filter_by(username=username).first():
-            return jsonify({"error": "username exists"}), 400
-        api_key = generate_api_key()
-        user = User(
-            username=username,
-            api_key=hash_key(api_key),
-            password_hash=generate_password_hash(password),
-        )
-        db.add(user)
-        db.commit()
-    return jsonify({"message": "account created", "api_key": api_key})
-
-
-@app.get("/api/session")
-def api_session():
-    if current_user.is_authenticated:
-        return jsonify({"username": current_user.username})
-    return jsonify({"username": None})
 
 
 @app.get("/api/datasets")
-@login_required
 def api_datasets():
-    """Return list of dataset names owned by the current user."""
+    """Return list of all dataset names."""
 
     names: set[str] = set()
     if REDIS:
-        key = f"user:{current_user.id}:datasets"
-        if REDIS.exists(key):
-            for raw in REDIS.smembers(key):
-                names.add(raw.decode() if isinstance(raw, bytes) else raw)
-        else:
-            for raw in REDIS.smembers("datasets"):
-                name = raw.decode() if isinstance(raw, bytes) else raw
-                try:
-                    driver = get_neo4j_driver()
-                    ds = DatasetBuilder.from_redis(REDIS, f"dataset:{name}", driver)
-                except KeyError:
-                    continue
-                if ds.owner_id in {None, current_user.id}:
-                    names.add(name)
+        for raw in REDIS.smembers("datasets"):
+            name = raw.decode() if isinstance(raw, bytes) else raw
+            names.add(name)
 
     return jsonify(sorted(names))
 
 
 @app.post("/api/datasets")
-@login_required
 def api_create_dataset():
     data = request.get_json() or {}
     name = data.get("name")
@@ -436,7 +382,6 @@ def api_create_dataset():
         abort(400, description="Dataset already exists")
     try:
         ds = DatasetBuilder(DatasetType(dtype), name=name)
-        ds.owner_id = current_user.id
         ds.redis_client = REDIS
         ds.neo4j_driver = get_neo4j_driver()
     except ValueError:
@@ -455,7 +400,6 @@ def api_create_dataset():
 
 
 @app.get("/api/datasets/<name>")
-@login_required
 def api_dataset_detail(name: str):
     """Return dataset details as JSON."""
     ds = get_dataset(name)
@@ -497,7 +441,6 @@ def api_dataset_detail(name: str):
 
 
 @app.get("/api/datasets/<name>/content")
-@login_required
 def api_dataset_content(name: str):
     """Return dataset documents with their chunks."""
     ds = get_dataset(name)
@@ -519,7 +462,6 @@ def api_dataset_content(name: str):
 
 
 @app.post("/api/datasets/<name>/ingest")
-@login_required
 def api_dataset_ingest(name: str):
     """Ingest a document into the dataset asynchronously."""
     ds = get_dataset(name)
@@ -535,7 +477,6 @@ def api_dataset_ingest(name: str):
     tid = dataset_ingest_task.delay(
         name,
         path,
-        current_user.id,
         doc_id=data.get("doc_id"),
         config=data.get("config"),
         high_res=bool(data.get("high_res", False)),
@@ -548,7 +489,6 @@ def api_dataset_ingest(name: str):
 
 
 @app.post("/api/datasets/<name>/generate")
-@login_required
 def api_dataset_generate(name: str):
     """Run the generation pipeline asynchronously."""
     ds = get_dataset(name)
@@ -558,12 +498,11 @@ def api_dataset_generate(name: str):
     params = data.get("params", {})
     if "start_step" in params and isinstance(params["start_step"], str):
         params["start_step"] = PipelineStep(params["start_step"])
-    tid = dataset_generate_task.delay(name, params, current_user.id).id
+    tid = dataset_generate_task.delay(name, params).id
     return jsonify({"task_id": tid})
 
 
 @app.delete("/api/datasets/<name>")
-@login_required
 def api_delete_dataset(name: str):
     """Delete the dataset asynchronously."""
 
@@ -571,12 +510,11 @@ def api_delete_dataset(name: str):
     if not ds:
         abort(404)
     DATASETS.pop(name, None)
-    tid = dataset_delete_task.delay(name, current_user.id).id
+    tid = dataset_delete_task.delay(name).id
     return jsonify({"task_id": tid})
 
 
 @app.delete("/api/datasets/<name>/chunks/<cid>")
-@login_required
 def api_delete_chunk(name: str, cid: str):
     ds = get_dataset(name)
     if not ds:
@@ -587,41 +525,37 @@ def api_delete_chunk(name: str, cid: str):
 
 
 @app.post("/api/datasets/<name>/deduplicate")
-@login_required
 def api_deduplicate(name: str):
     """Remove duplicate chunks from the dataset."""
     if not get_dataset(name):
         abort(404)
     tid = dataset_operation_task.delay(
-        name, "deduplicate_chunks", None, current_user.id
+        name, "deduplicate_chunks", None
     ).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/clean_chunks")
-@login_required
 def api_clean_chunks(name: str):
     """Normalize chunk text by stripping markup and whitespace."""
     if not get_dataset(name):
         abort(404)
-    tid = dataset_operation_task.delay(name, "clean_chunks", None, current_user.id).id
+    tid = dataset_operation_task.delay(name, "clean_chunks", None).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/normalize_dates")
-@login_required
 def api_normalize_dates(name: str):
     """Normalize date fields on dataset nodes."""
     if not get_dataset(name):
         abort(404)
     tid = dataset_operation_task.delay(
-        name, "normalize_dates", None, current_user.id
+        name, "normalize_dates", None
     ).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/prune")
-@login_required
 def api_prune(name: str):
     """Remove nodes originating from specific sources."""
     if not get_dataset(name):
@@ -636,13 +570,11 @@ def api_prune(name: str):
         name,
         "prune_sources",
         {"sources": sources},
-        current_user.id,
     ).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/cleanup")
-@login_required
 def api_cleanup_dataset(name: str):
     """Run cleanup operations asynchronously."""
     if not get_dataset(name):
@@ -662,25 +594,23 @@ def api_cleanup_dataset(name: str):
     if "validate" in data:
         params["validate"] = bool(data.get("validate", False))
 
-    tid = dataset_cleanup_task.delay(name, params, current_user.id).id
+    tid = dataset_cleanup_task.delay(name, params).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/similarity")
-@login_required
 def api_similarity(name: str):
     """Create similarity links between chunks."""
     if not get_dataset(name):
         abort(404)
     k = int(request.args.get("k", 3))
     tid = dataset_operation_task.delay(
-        name, "link_similar_chunks", {"k": k}, current_user.id
+        name, "link_similar_chunks", {"k": k}
     ).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/section_similarity")
-@login_required
 def api_section_similarity(name: str):
     """Create similarity links between section titles."""
 
@@ -688,13 +618,12 @@ def api_section_similarity(name: str):
         abort(404)
     k = int(request.args.get("k", 3))
     tid = dataset_operation_task.delay(
-        name, "link_similar_sections", {"k": k}, current_user.id
+        name, "link_similar_sections", {"k": k}
     ).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/document_similarity")
-@login_required
 def api_document_similarity(name: str):
     """Create similarity links between documents."""
 
@@ -702,64 +631,59 @@ def api_document_similarity(name: str):
         abort(404)
     k = int(request.args.get("k", 3))
     tid = dataset_operation_task.delay(
-        name, "link_similar_documents", {"k": k}, current_user.id
+        name, "link_similar_documents", {"k": k}
     ).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/co_mentions")
-@login_required
 def api_co_mentions(name: str):
     """Create links between chunks that mention the same entity."""
 
     if not get_dataset(name):
         abort(404)
     tid = dataset_operation_task.delay(
-        name, "link_chunks_by_entity", None, current_user.id
+        name, "link_chunks_by_entity", None
     ).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/doc_co_mentions")
-@login_required
 def api_doc_co_mentions(name: str):
     """Create links between documents that mention the same entity."""
 
     if not get_dataset(name):
         abort(404)
     tid = dataset_operation_task.delay(
-        name, "link_documents_by_entity", None, current_user.id
+        name, "link_documents_by_entity", None
     ).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/section_co_mentions")
-@login_required
 def api_section_co_mentions(name: str):
     """Create links between sections that mention the same entity."""
 
     if not get_dataset(name):
         abort(404)
     tid = dataset_operation_task.delay(
-        name, "link_sections_by_entity", None, current_user.id
+        name, "link_sections_by_entity", None
     ).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/author_org_links")
-@login_required
 def api_author_org_links(name: str):
     """Link document authors to their organizations."""
     if not get_dataset(name):
         abort(404)
     tid = dataset_operation_task.delay(
-        name, "link_authors_organizations", None, current_user.id
+        name, "link_authors_organizations", None
     ).id
     return jsonify({"task_id": tid})
 
 
 @app.get("/api/datasets/<name>/similar_chunks")
-@login_required
 def api_similar_chunks(name: str):
     """Return chunk IDs similar to ``cid``."""
     ds = get_dataset(name)
@@ -774,7 +698,6 @@ def api_similar_chunks(name: str):
 
 
 @app.get("/api/datasets/<name>/similar_chunks_data")
-@login_required
 def api_similar_chunks_data(name: str):
     """Return similar chunk info for ``cid``."""
     ds = get_dataset(name)
@@ -789,7 +712,6 @@ def api_similar_chunks_data(name: str):
 
 
 @app.get("/api/datasets/<name>/chunk_neighbors")
-@login_required
 def api_chunk_neighbors(name: str):
     """Return nearest neighbors for every chunk in the dataset."""
 
@@ -802,7 +724,6 @@ def api_chunk_neighbors(name: str):
 
 
 @app.get("/api/datasets/<name>/chunk_neighbors_data")
-@login_required
 def api_chunk_neighbors_data(name: str):
     """Return neighbor data for every chunk."""
 
@@ -815,7 +736,6 @@ def api_chunk_neighbors_data(name: str):
 
 
 @app.get("/api/datasets/<name>/similar_sections")
-@login_required
 def api_similar_sections(name: str):
     """Return section IDs similar to ``sid``."""
 
@@ -831,7 +751,6 @@ def api_similar_sections(name: str):
 
 
 @app.get("/api/datasets/<name>/similar_documents")
-@login_required
 def api_similar_documents(name: str):
     """Return document IDs similar to ``did``."""
 
@@ -847,7 +766,6 @@ def api_similar_documents(name: str):
 
 
 @app.get("/api/datasets/<name>/chunk_context")
-@login_required
 def api_chunk_context(name: str):
     """Return IDs of chunks surrounding ``cid``."""
 
@@ -864,7 +782,6 @@ def api_chunk_context(name: str):
 
 
 @app.get("/api/datasets/<name>/chunk_document")
-@login_required
 def api_chunk_document(name: str):
     """Return the document ID owning ``cid``."""
 
@@ -879,7 +796,6 @@ def api_chunk_document(name: str):
 
 
 @app.get("/api/datasets/<name>/chunk_page")
-@login_required
 def api_chunk_page(name: str):
     """Return the page number for ``cid`` if available."""
 
@@ -894,7 +810,6 @@ def api_chunk_page(name: str):
 
 
 @app.get("/api/datasets/<name>/section_document")
-@login_required
 def api_section_document(name: str):
     """Return the document ID owning ``sid``."""
 
@@ -909,7 +824,6 @@ def api_section_document(name: str):
 
 
 @app.get("/api/datasets/<name>/section_page")
-@login_required
 def api_section_page(name: str):
     """Return the page number recorded for ``sid``."""
 
@@ -924,7 +838,6 @@ def api_section_page(name: str):
 
 
 @app.get("/api/datasets/<name>/chunk_entities")
-@login_required
 def api_chunk_entities(name: str):
     ds = get_dataset(name)
     if not ds:
@@ -937,7 +850,6 @@ def api_chunk_entities(name: str):
 
 
 @app.get("/api/datasets/<name>/chunk_facts")
-@login_required
 def api_chunk_facts(name: str):
     ds = get_dataset(name)
     if not ds:
@@ -950,7 +862,6 @@ def api_chunk_facts(name: str):
 
 
 @app.get("/api/datasets/<name>/fact_sections")
-@login_required
 def api_fact_sections(name: str):
     ds = get_dataset(name)
     if not ds:
@@ -963,7 +874,6 @@ def api_fact_sections(name: str):
 
 
 @app.get("/api/datasets/<name>/fact_documents")
-@login_required
 def api_fact_documents(name: str):
     ds = get_dataset(name)
     if not ds:
@@ -976,7 +886,6 @@ def api_fact_documents(name: str):
 
 
 @app.get("/api/datasets/<name>/fact_pages")
-@login_required
 def api_fact_pages(name: str):
     """Return page numbers referencing ``fid``."""
 
@@ -991,7 +900,6 @@ def api_fact_pages(name: str):
 
 
 @app.get("/api/datasets/<name>/entity_documents")
-@login_required
 def api_entity_documents(name: str):
     ds = get_dataset(name)
     if not ds:
@@ -1004,7 +912,6 @@ def api_entity_documents(name: str):
 
 
 @app.get("/api/datasets/<name>/entity_chunks")
-@login_required
 def api_entity_chunks(name: str):
     ds = get_dataset(name)
     if not ds:
@@ -1017,7 +924,6 @@ def api_entity_chunks(name: str):
 
 
 @app.get("/api/datasets/<name>/entity_facts")
-@login_required
 def api_entity_facts(name: str):
     ds = get_dataset(name)
     if not ds:
@@ -1030,7 +936,6 @@ def api_entity_facts(name: str):
 
 
 @app.get("/api/datasets/<name>/entity_pages")
-@login_required
 def api_entity_pages(name: str):
     """Return page numbers mentioning ``eid``."""
 
@@ -1045,7 +950,6 @@ def api_entity_pages(name: str):
 
 
 @app.get("/api/datasets/<name>/search_hybrid")
-@login_required
 def api_search_hybrid(name: str):
     """Hybrid lexical/vector search on nodes."""
     ds = get_dataset(name)
@@ -1061,7 +965,6 @@ def api_search_hybrid(name: str):
 
 
 @app.get("/api/datasets/<name>/search_links")
-@login_required
 def api_search_links(name: str):
     """Search and expand results through graph links."""
     ds = get_dataset(name)
@@ -1077,7 +980,6 @@ def api_search_links(name: str):
 
 
 @app.get("/api/datasets/<name>/explain/<nid>")
-@login_required
 def api_explain_node(name: str, nid: str):
     """Return a 3-hop subgraph around ``nid`` with attention heatmap."""
 
@@ -1093,7 +995,7 @@ def api_explain_node(name: str, nid: str):
 
 
 @app.post("/api/datasets/<name>/consolidate")
-@login_required
+
 def api_consolidate(name: str):
     ds = get_dataset(name)
     if not ds:
@@ -1105,7 +1007,7 @@ def api_consolidate(name: str):
 
 
 @app.post("/api/datasets/<name>/communities")
-@login_required
+
 def api_communities(name: str):
     if not get_dataset(name):
         abort(404)
@@ -1116,7 +1018,7 @@ def api_communities(name: str):
 
 
 @app.post("/api/datasets/<name>/entity_groups")
-@login_required
+
 def api_entity_groups(name: str):
     if not get_dataset(name):
         abort(404)
@@ -1127,7 +1029,7 @@ def api_entity_groups(name: str):
 
 
 @app.post("/api/datasets/<name>/summaries")
-@login_required
+
 def api_summaries(name: str):
     if not get_dataset(name):
         abort(404)
@@ -1138,7 +1040,7 @@ def api_summaries(name: str):
 
 
 @app.post("/api/datasets/<name>/entity_group_summaries")
-@login_required
+
 def api_entity_group_summaries(name: str):
     if not get_dataset(name):
         abort(404)
@@ -1149,7 +1051,7 @@ def api_entity_group_summaries(name: str):
 
 
 @app.post("/api/datasets/<name>/resolve_entities")
-@login_required
+
 def api_resolve_entities(name: str):
     if not get_dataset(name):
         abort(404)
@@ -1166,7 +1068,7 @@ def api_resolve_entities(name: str):
 
 
 @app.post("/api/datasets/<name>/predict_links")
-@login_required
+
 def api_predict_links(name: str):
     if not get_dataset(name):
         abort(404)
@@ -1181,7 +1083,7 @@ def api_predict_links(name: str):
 
 
 @app.post("/api/datasets/<name>/enrich_entity/<eid>")
-@login_required
+
 def api_enrich_entity(name: str, eid: str):
     if not get_dataset(name):
         abort(404)
@@ -1195,7 +1097,7 @@ def api_enrich_entity(name: str, eid: str):
 
 
 @app.post("/api/datasets/<name>/enrich_entity_dbpedia/<eid>")
-@login_required
+
 def api_enrich_entity_dbpedia(name: str, eid: str):
     if not get_dataset(name):
         abort(404)
@@ -1203,22 +1105,19 @@ def api_enrich_entity_dbpedia(name: str, eid: str):
         name,
         "enrich_entity_dbpedia",
         {"entity_id": eid},
-        current_user.id,
     ).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/trust")
-@login_required
 def api_trust(name: str):
     if not get_dataset(name):
         abort(404)
-    tid = dataset_operation_task.delay(name, "score_trust", None, current_user.id).id
+    tid = dataset_operation_task.delay(name, "score_trust", None).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/centrality")
-@login_required
 def api_centrality(name: str):
     """Compute centrality for dataset nodes."""
 
@@ -1230,13 +1129,11 @@ def api_centrality(name: str):
         name,
         "compute_centrality",
         {"node_type": node_type, "metric": metric},
-        current_user.id,
     ).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/graph_embeddings")
-@login_required
 def api_graph_embeddings(name: str):
     """Generate Node2Vec embeddings for all nodes."""
 
@@ -1260,38 +1157,34 @@ def api_graph_embeddings(name: str):
             "seed": seed,
             "workers": workers,
         },
-        current_user.id,
     ).id
 
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/extract_facts")
-@login_required
 def api_extract_facts(name: str):
     """Extract atomic facts from dataset chunks using an LLM."""
     if not get_dataset(name):
         abort(404)
     provider = request.json.get("provider") if request.json else None
     profile = request.json.get("profile") if request.json else None
-    tid = dataset_extract_facts_task.delay(name, provider, profile, current_user.id).id
+    tid = dataset_extract_facts_task.delay(name, provider, profile).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/extract_entities")
-@login_required
 def api_extract_entities(name: str):
     """Run named entity recognition on dataset chunks."""
 
     if not get_dataset(name):
         abort(404)
     model = request.json.get("model") if request.json else "en_core_web_sm"
-    tid = dataset_extract_entities_task.delay(name, model, current_user.id).id
+    tid = dataset_extract_entities_task.delay(name, model).id
     return jsonify({"task_id": tid})
 
 
 @app.get("/api/datasets/<name>/conflicts")
-@login_required
 def api_conflicts(name: str):
     ds = get_dataset(name)
     if not ds:
@@ -1301,45 +1194,41 @@ def api_conflicts(name: str):
 
 
 @app.post("/api/datasets/<name>/mark_conflicts")
-@login_required
 def api_mark_conflicts(name: str):
     """Flag conflicting facts on graph edges."""
 
     if not get_dataset(name):
         abort(404)
     tid = dataset_operation_task.delay(
-        name, "mark_conflicting_facts", None, current_user.id
+        name, "mark_conflicting_facts", None
     ).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/validate")
-@login_required
 def api_validate(name: str):
     """Run logical consistency checks on the dataset."""
 
     if not get_dataset(name):
         abort(404)
     tid = dataset_operation_task.delay(
-        name, "validate_coherence", None, current_user.id
+        name, "validate_coherence", None
     ).id
     return jsonify({"task_id": tid})
 
 
 @app.get("/api/datasets/<name>/export")
-@login_required
 def api_export_dataset(name: str):
     """Export the dataset asynchronously."""
     ds = get_dataset(name)
     if not ds:
         abort(404)
     fmt = ExportFormat(request.args.get("fmt", "jsonl"))
-    tid = dataset_export_task.delay(name, fmt, current_user.id).id
+    tid = dataset_export_task.delay(name, fmt).id
     return jsonify({"task_id": tid})
 
 
 @app.get("/api/datasets/<name>/export_result")
-@login_required
 def api_export_result(name: str):
     """Return previously exported dataset data from Redis."""
 
@@ -1358,7 +1247,6 @@ def api_export_result(name: str):
 
 
 @app.get("/api/datasets/<name>/history")
-@login_required
 def api_dataset_history(name: str):
     """Return the dataset's history events."""
 
@@ -1381,7 +1269,6 @@ def api_dataset_history(name: str):
 
 
 @app.get("/api/datasets/<name>/versions")
-@login_required
 def api_dataset_versions(name: str):
     """Return all generation versions for the dataset."""
 
@@ -1392,7 +1279,6 @@ def api_dataset_versions(name: str):
 
 
 @app.get("/api/datasets/<name>/versions/<int:idx>")
-@login_required
 def api_dataset_version(name: str, idx: int):
     """Return a specific generation version."""
 
@@ -1405,7 +1291,6 @@ def api_dataset_version(name: str, idx: int):
 
 
 @app.get("/api/datasets/<name>/progress")
-@login_required
 def api_dataset_progress(name: str):
     """Return generation progress stored in Redis."""
 
@@ -1429,24 +1314,22 @@ def api_dataset_progress(name: str):
 
 
 @app.post("/api/datasets/<name>/save_neo4j")
-@login_required
 def api_save_dataset_neo4j(name: str):
     """Persist the dataset graph to Neo4j asynchronously."""
     if not get_dataset(name):
         abort(404)
     if neo4j_breaker.current_state != 0:  # 0 == CLOSED
         abort(429)
-    tid = dataset_save_neo4j_task.delay(name, current_user.id).id
+    tid = dataset_save_neo4j_task.delay(name).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/datasets/<name>/load_neo4j")
-@login_required
 def api_load_dataset_neo4j(name: str):
     """Load the dataset graph from Neo4j asynchronously."""
     if not get_dataset(name):
         abort(404)
-    tid = dataset_load_neo4j_task.delay(name, current_user.id).id
+    tid = dataset_load_neo4j_task.delay(name).id
     return jsonify({"task_id": tid})
 
 
@@ -1456,31 +1339,18 @@ def api_load_dataset_neo4j(name: str):
 
 
 @app.get("/api/graphs")
-@login_required
 def api_graphs():
-    """Return list of knowledge graph names owned by the user."""
+    """Return list of all knowledge graph names."""
     names: set[str] = set()
     if REDIS:
-        key = f"user:{current_user.id}:graphs"
-        if REDIS.exists(key):
-            for raw in REDIS.smembers(key):
-                names.add(raw.decode() if isinstance(raw, bytes) else raw)
-        else:
-            for raw in REDIS.smembers("graphs"):
-                name = raw.decode() if isinstance(raw, bytes) else raw
-                try:
-                    driver = get_neo4j_driver()
-                    ds = DatasetBuilder.from_redis(REDIS, f"graph:{name}", driver)
-                except KeyError:
-                    continue
-                if ds.owner_id in {None, current_user.id}:
-                    names.add(name)
+        for raw in REDIS.smembers("graphs"):
+            name = raw.decode() if isinstance(raw, bytes) else raw
+            names.add(name)
 
     return jsonify(sorted(names))
 
 
 @app.post("/api/graphs")
-@login_required
 def api_create_graph():
     data = request.get_json() or {}
     name = data.get("name")
@@ -1490,11 +1360,10 @@ def api_create_graph():
     if name in GRAPHS:
         abort(400, description="Graph already exists")
     kg_ds = DatasetBuilder(DatasetType.TEXT, name=name)
-    kg_ds.owner_id = current_user.id
     kg_ds.redis_client = REDIS
     kg_ds.neo4j_driver = get_neo4j_driver()
     for path in docs:
-        ingest_into_dataset(path, kg_ds, config=config)
+        ingest_into_dataset(path, kg_ds, config=get_app_config())
     kg_ds.history.append("Graph created")
     GRAPHS[name] = kg_ds
     save_graph(kg_ds)
@@ -1502,7 +1371,6 @@ def api_create_graph():
 
 
 @app.get("/api/graphs/<name>")
-@login_required
 def api_graph_detail(name: str):
     ds = get_graph(name)
     if not ds:
@@ -1517,7 +1385,6 @@ def api_graph_detail(name: str):
 
 
 @app.get("/api/graphs/<name>/data")
-@login_required
 def api_graph_data(name: str):
     ds = get_graph(name)
     if not ds:
@@ -1526,7 +1393,6 @@ def api_graph_data(name: str):
 
 
 @app.get("/api/graphs/<name>/progress")
-@login_required
 def api_graph_progress(name: str):
     """Return progress information stored for the graph."""
 
@@ -1550,35 +1416,32 @@ def api_graph_progress(name: str):
 
 
 @app.delete("/api/graphs/<name>")
-@login_required
 def api_delete_graph(name: str):
     """Delete a knowledge graph asynchronously."""
     if not get_graph(name):
         abort(404)
     GRAPHS.pop(name, None)
-    tid = graph_delete_task.delay(name, current_user.id).id
+    tid = graph_delete_task.delay(name).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/graphs/<name>/save_neo4j")
-@login_required
 def api_graph_save_neo4j(name: str):
     """Persist the graph to Neo4j asynchronously."""
     if not get_graph(name):
         abort(404)
     if neo4j_breaker.current_state != 0:
         abort(429)
-    tid = graph_save_neo4j_task.delay(name, current_user.id).id
+    tid = graph_save_neo4j_task.delay(name).id
     return jsonify({"task_id": tid})
 
 
 @app.post("/api/graphs/<name>/load_neo4j")
-@login_required
 def api_graph_load_neo4j(name: str):
     """Load the graph from Neo4j asynchronously."""
     if not get_graph(name):
         abort(404)
-    tid = graph_load_neo4j_task.delay(name, current_user.id).id
+    tid = graph_load_neo4j_task.delay(name).id
     return jsonify({"task_id": tid})
 
 
@@ -1592,7 +1455,6 @@ def index():
 
 
 @app.route("/datasets", methods=["GET", "POST"])
-@login_required
 def datasets():
     """List and create datasets"""
     form = DatasetForm()
@@ -1609,7 +1471,6 @@ def datasets():
 
 
 @app.route("/datasets/<name>")
-@login_required
 def dataset_detail(name: str):
     ds = get_dataset(name)
     if not ds:
@@ -1618,7 +1479,6 @@ def dataset_detail(name: str):
 
 
 @app.get("/datasets/<name>/graph")
-@login_required
 def dataset_graph(name: str):
     """Return dataset knowledge graph as JSON."""
     ds = get_dataset(name)
@@ -1628,7 +1488,6 @@ def dataset_graph(name: str):
 
 
 @app.get("/datasets/<name>/search")
-@login_required
 def dataset_search(name: str):
     """Return node ids matching the query."""
     ds = get_dataset(name)
@@ -1643,7 +1502,6 @@ def dataset_search(name: str):
 
 
 @app.post("/datasets/<name>/ingest")
-@login_required
 def dataset_ingest(name: str):
     """Ingest a file or URL into the dataset knowledge graph."""
     ds = get_dataset(name)
@@ -1662,7 +1520,7 @@ def dataset_ingest(name: str):
         ds.ingest_file(
             input_path,
             doc_id=doc_id,
-            config=config,
+            config=get_app_config(),
             high_res=high_res,
             ocr=ocr,
         )
@@ -1674,7 +1532,6 @@ def dataset_ingest(name: str):
 
 
 @app.post("/datasets/<name>/save_neo4j")
-@login_required
 def save_dataset_neo4j(name: str):
     """Persist the dataset graph to Neo4j."""
     ds = get_dataset(name)
@@ -1692,7 +1549,6 @@ def save_dataset_neo4j(name: str):
 
 
 @app.post("/datasets/<name>/load_neo4j")
-@login_required
 def load_dataset_neo4j(name: str):
     """Load the dataset graph from Neo4j."""
     ds = get_dataset(name)
@@ -1710,19 +1566,17 @@ def load_dataset_neo4j(name: str):
 
 
 @app.post("/datasets/<name>/delete")
-@login_required
 def delete_dataset(name: str):
     ds = get_dataset(name)
     if not ds:
         abort(404)
     DATASETS.pop(name, None)
-    dataset_delete_task.delay(name, current_user.id)
+    dataset_delete_task.delay(name)
     flash("Dataset deletion started", "success")
     return redirect(url_for("datasets"))
 
 
 @app.post("/datasets/<name>/copy")
-@login_required
 def copy_dataset(name: str):
     ds = get_dataset(name)
     if not ds:
@@ -1740,11 +1594,10 @@ def copy_dataset(name: str):
 
 
 @app.route("/create", methods=["GET", "POST"])
-@login_required
 def create():
     """Create content from text"""
     form = CreateForm()
-    default_provider = get_llm_provider(config)
+    default_provider = get_llm_provider(get_app_config())
 
     if not form.provider.data:
         form.provider.data = default_provider
@@ -1793,11 +1646,10 @@ def create():
 
 
 @app.route("/curate", methods=["GET", "POST"])
-@login_required
 def curate():
     """Curate QA pairs interface"""
     form = CurateForm()
-    default_provider = get_llm_provider(config)
+    default_provider = get_llm_provider(get_app_config())
 
     if not form.provider.data:
         form.provider.data = default_provider
@@ -1835,7 +1687,6 @@ def curate():
 
 
 @app.route("/ingest", methods=["GET", "POST"])
-@login_required
 def ingest():
     """Ingest and parse documents"""
     form = IngestForm()
@@ -1870,7 +1721,7 @@ def ingest():
             # Process the file or URL
             ingest_process_file(
                 file_path=input_path,
-                config=config,
+                config=get_app_config(),
             )
 
             # Clean up temporary file if it was an upload
@@ -1902,6 +1753,7 @@ def ingest():
 def run_server(host="127.0.0.1", port=5000, debug=False):
     """Run the Flask server."""
 
+    ensure_app_ready()
     if REDIS:
         load_datasets_from_redis()
         load_graphs_from_redis()
