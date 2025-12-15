@@ -14,7 +14,7 @@ INSTALL_REQUIRES = [
     "numpy==1.26.0",
     "pillow==11.0.0",
     "prometheus-client==0.22.0",
-    "sqlalchemy==2.0.42",
+    "sqlalchemy==2.0.45",
     "scipy==1.13.1",
     "networkx==3.2.1",
     # "faiss-cpu==1.8.0", # Conflicts with faiss-gpu often; trying to install all might mean preferring GPU if listed?
