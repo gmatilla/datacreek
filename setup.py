@@ -2,7 +2,7 @@
 from setuptools import find_packages, setup
 
 INSTALL_REQUIRES = [
-    "fastapi==0.111.0",
+    "fastapi==0.124.4",
     "pydantic>=2.7,<3.0",
     "requests==2.31.0",
     "rich==13.4.2",
