@@ -11,7 +11,7 @@ INSTALL_REQUIRES = [
     "neo4j==5.17.0",
     "boto3==1.34.0",
     "gudhi==3.9.0",
-    "numpy==1.26.0",
+    "numpy==2.3.5",
     "pillow==11.0.0",
     "prometheus-client==0.22.0",
     "sqlalchemy==2.0.42",
