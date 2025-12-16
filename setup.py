@@ -4,7 +4,7 @@ from setuptools import find_packages, setup
 INSTALL_REQUIRES = [
     "fastapi==0.111.0",
     "pydantic>=2.7,<3.0",
-    "requests==2.31.0",
+    "requests==2.32.5",
     "rich==13.4.2",
     "redis==5.0.4",
     "fakeredis==2.30.0",
