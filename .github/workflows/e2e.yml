@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - run: pip install . fakeredis requests python-dateutil pydantic==2.4.0 rich watchdog PyYAML numpy prometheus_client jinja2
