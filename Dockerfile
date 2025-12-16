@@ -4,11 +4,11 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY requirements.txt requirements-ci.txt ./
+COPY setup.py ./
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir -r requirements.txt -r requirements-ci.txt
+    && pip install --no-cache-dir .
 COPY datacreek ./datacreek
 COPY configs ./configs
 COPY README.md ./

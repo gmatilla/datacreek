@@ -261,7 +261,7 @@ git clone https://github.com/gmatilla/datacreek.git
 cd datacreek
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install .
 ```
 
 Optional helpers such as quantity normalization during text cleanup require
@@ -288,7 +288,7 @@ dependencies:
 
 ```powershell
 python -m pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt --progress-bar off
+pip install . --progress-bar off
 ```
 
 If the previous command times out because of the large dependency set, install
@@ -473,7 +473,7 @@ git clone https://github.com/gmatilla/datacreek.git
 cd datacreek
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install .
 ```
 
 The front-end lives in `frontend` and can be started separately for a faster

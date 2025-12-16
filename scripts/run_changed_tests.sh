@@ -38,7 +38,7 @@ set +e
 docker run --rm \
   -v "$DIR":/workspace \
   -w /workspace datacreek:test \
-  bash -c "pip install pytest pytest-cov && PYTHONPATH=/workspace ${cmd[*]} -vv 2>&1 | tee /workspace/$log_file"
+  bash -c "PYTHONPATH=/workspace ${cmd[*]} -vv 2>&1 | tee /workspace/$log_file"
 status=$?
 set -e
 if [ $status -ne 0 ]; then

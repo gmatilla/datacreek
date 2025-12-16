@@ -447,7 +447,7 @@ git clone https://github.com/gmatilla/datacreek.git
 cd datacreek
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install .
 ```
 
 ### Setting Up VLLM
