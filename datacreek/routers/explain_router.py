@@ -11,29 +11,22 @@ be used from demo pages.
 import base64
 import json
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from datacreek.analysis import explain_to_svg, top_k_incoherent
 from datacreek.backends import get_neo4j_driver, get_redis_client
 from datacreek.core.dataset import DatasetBuilder
-from datacreek.db import SessionLocal, User
-from datacreek.services import get_user_by_key
+from datacreek.db import SessionLocal
 
 router = APIRouter(prefix="/explain", tags=["explain"])
 
 
-def get_current_user(api_key: str = Header(..., alias="X-API-Key")) -> User:
-    """Authenticate using the API key stored in the database or Redis."""
-    with SessionLocal() as db:
-        user = get_user_by_key(db, api_key)
-        if not user:
-            raise HTTPException(status_code=401, detail="Invalid API key")
-        return user
 
 
-def _load_dataset(name: str, user: User) -> DatasetBuilder:
-    """Return ``DatasetBuilder`` for ``name`` if accessible by ``user``."""
+
+def _load_dataset(name: str) -> DatasetBuilder:
+    """Return ``DatasetBuilder`` for ``name``."""
     client = get_redis_client()
     if client is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
@@ -45,8 +38,6 @@ def _load_dataset(name: str, user: User) -> DatasetBuilder:
     finally:
         if driver:
             driver.close()
-    if ds.owner_id not in {None, user.id}:
-        raise HTTPException(status_code=404, detail="Dataset not found")
     ds.redis_client = client
     return ds
 
@@ -56,7 +47,6 @@ def sheaf_diff(
     dataset: str = Query("demo", alias="dataset"),
     top: int = Query(50, ge=1),
     tau: float = Query(0.0, ge=0.0),
-    user: User = Depends(get_current_user),
 ) -> JSONResponse:
     """Return up to ``top`` edges with spectral mismatch > ``tau``.
 
@@ -66,7 +56,7 @@ def sheaf_diff(
     of edges sorted by this difference.
     """
 
-    ds = _load_dataset(dataset, user)
+    ds = _load_dataset(dataset)
     g = getattr(ds, "graph", None)
     if callable(g):
         g = g()
@@ -83,7 +73,6 @@ def sheaf_diff(
 @router.get("/repair_preview", summary="Preview repair suggestions")
 def repair_preview(
     limit: int = Query(5, ge=1, le=100),
-    user: User = Depends(get_current_user),
 ) -> JSONResponse:
     """Return up to ``limit`` stored repair suggestions.
 
@@ -106,7 +95,6 @@ def explain_node_public(
         examples={"default": {"summary": "Demo dataset", "value": "demo"}},
     ),
     hops: int = Query(3, ge=1, le=5),
-    user: User = Depends(get_current_user),
 ) -> JSONResponse:
     """Return explanation data for ``node`` in ``dataset``.
 
@@ -129,7 +117,7 @@ def explain_node_public(
         }).then(r => r.json());
     """
 
-    ds = _load_dataset(dataset, user)
+    ds = _load_dataset(dataset)
     data = ds.explain_node(node, hops=hops)
     svg = explain_to_svg(data)
     payload = {

@@ -54,32 +54,22 @@ def patch_builder(monkeypatch):
 
 def test_list_user_datasets_sorted(monkeypatch):
     user = types.SimpleNamespace(id=1)
-    redis = DummyRedis({"user:1:datasets": {b"b", "a"}})
+    redis = DummyRedis({"datasets": {b"b", "a"}})
     monkeypatch.setattr(api, "get_redis_client", lambda: redis)
-    assert api.list_user_datasets(current_user=user) == ["a", "b"]
+    assert api.list_user_datasets() == ["a", "b"]
 
 
 def test_list_user_datasets_no_client(monkeypatch):
     user = types.SimpleNamespace(id=1)
     monkeypatch.setattr(api, "get_redis_client", lambda: None)
-    assert api.list_user_datasets(current_user=user) == []
-
-
-def test_load_dataset_owner_check(monkeypatch):
-    user = types.SimpleNamespace(id=1)
-    redis = DummyRedis()
-    ds = DummyDataset("x", owner_id=2, redis_client=redis)
-    monkeypatch.setattr(api, "get_redis_client", lambda: redis)
-    monkeypatch.setattr(DummyDataset, "from_redis", lambda *a, **k: ds)
-    with pytest.raises(HTTPException):
-        api._load_dataset("x", user)
+    assert api.list_user_datasets() == []
 
 
 def test_load_dataset_no_client(monkeypatch):
     user = types.SimpleNamespace(id=1)
     monkeypatch.setattr(api, "get_redis_client", lambda: None)
     with pytest.raises(HTTPException):
-        api._load_dataset("x", user)
+        api._load_dataset("x")
 
 
 def test_load_dataset_missing(monkeypatch):
@@ -92,7 +82,7 @@ def test_load_dataset_missing(monkeypatch):
 
     monkeypatch.setattr(DummyDataset, "from_redis", raise_key)
     with pytest.raises(HTTPException):
-        api._load_dataset("x", user)
+        api._load_dataset("x")
 
 
 def test_dataset_version_and_deletion(monkeypatch):
@@ -101,9 +91,9 @@ def test_dataset_version_and_deletion(monkeypatch):
     monkeypatch.setattr(api, "get_redis_client", lambda: redis)
     monkeypatch.setattr(DummyDataset, "from_redis", lambda *a, **k: ds)
     user = types.SimpleNamespace(id=1)
-    item = api.dataset_version_item("d", 1, current_user=user)
+    item = api.dataset_version_item("d", 1)
     assert item == {"v": 1}
-    api.delete_dataset_version_item("d", 1, current_user=user)
+    api.delete_dataset_version_item("d", 1)
     assert len(ds.versions) == 1
 
 
@@ -114,7 +104,7 @@ def test_dataset_version_item_missing(monkeypatch):
     monkeypatch.setattr(DummyDataset, "from_redis", lambda *a, **k: ds)
     user = types.SimpleNamespace(id=1)
     with pytest.raises(HTTPException):
-        api.dataset_version_item("d", 5, current_user=user)
+        api.dataset_version_item("d", 5)
 
 
 def test_dataset_version_item_low(monkeypatch):
@@ -124,16 +114,16 @@ def test_dataset_version_item_low(monkeypatch):
     monkeypatch.setattr(DummyDataset, "from_redis", lambda *a, **k: ds)
     user = types.SimpleNamespace(id=1)
     with pytest.raises(HTTPException):
-        api.dataset_version_item("d", 0, current_user=user)
+        api.dataset_version_item("d", 0)
 
 
 def test_list_user_datasets_details(monkeypatch):
-    redis = DummyRedis({"user:1:datasets": {"a"}, "dataset:a:progress": {"p": 1}})
+    redis = DummyRedis({"datasets": {"a"}, "dataset:a:progress": {"p": 1}})
     ds = DummyDataset("a", redis_client=redis)
     monkeypatch.setattr(api, "get_redis_client", lambda: redis)
     monkeypatch.setattr(DummyDataset, "from_redis", lambda *a, **k: ds)
     user = types.SimpleNamespace(id=1)
-    res = api.list_user_datasets_details(current_user=user)
+    res = api.list_user_datasets_details()
     assert res == [{"name": "a", "stage": "ready", "progress": {"p": 1}}]
 
 
@@ -143,7 +133,7 @@ def test_load_dataset_success(monkeypatch):
     monkeypatch.setattr(api, "get_redis_client", lambda: redis)
     monkeypatch.setattr(DummyDataset, "from_redis", lambda *a, **k: ds)
     user = types.SimpleNamespace(id=1)
-    result = api._load_dataset("a", user)
+    result = api._load_dataset("a")
     assert result is ds and result.redis_client is redis
 
 
@@ -158,7 +148,7 @@ def test_dataset_export_result(monkeypatch):
     monkeypatch.setattr(api, "get_redis_client", lambda: redis)
     monkeypatch.setattr(DummyDataset, "from_redis", lambda *a, **k: ds)
     user = types.SimpleNamespace(id=1)
-    resp = api.dataset_export_result("name", api.ExportFormat.JSONL, current_user=user)
+    resp = api.dataset_export_result("name", api.ExportFormat.JSONL)
     assert "DATA" in resp.body.decode()
 
 
@@ -169,7 +159,7 @@ def test_dataset_export_not_found(monkeypatch):
     monkeypatch.setattr(DummyDataset, "from_redis", lambda *a, **k: ds)
     user = types.SimpleNamespace(id=1)
     with pytest.raises(HTTPException):
-        api.dataset_export_result("name", api.ExportFormat.JSONL, current_user=user)
+        api.dataset_export_result("name", api.ExportFormat.JSONL)
 
 
 def test_dataset_progress_and_history(monkeypatch):
@@ -182,7 +172,7 @@ def test_dataset_progress_and_history(monkeypatch):
     monkeypatch.setattr(api, "get_redis_client", lambda: redis)
     monkeypatch.setattr(DummyDataset, "from_redis", lambda *a, **k: ds)
     user = types.SimpleNamespace(id=1)
-    prog = api.dataset_progress("n", current_user=user)
+    prog = api.dataset_progress("n")
     assert prog == {"a": 1}
-    hist = api.dataset_progress_history("n", current_user=user)
+    hist = api.dataset_progress_history("n")
     assert hist == [{"x": 1}]

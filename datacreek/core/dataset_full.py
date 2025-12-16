@@ -4824,7 +4824,7 @@ class DatasetBuilder:
             graph=deepcopy(self.graph),
             use_hnsw=self.use_hnsw,
         )
-        clone.owner_id = self.owner_id
+
         clone.history = self.history.copy()
         clone.versions = deepcopy(self.versions)
         clone.stage = self.stage
@@ -4837,7 +4837,7 @@ class DatasetBuilder:
             "dataset_type": self.dataset_type.value,
             "id": self.id,
             "name": self.name,
-            "owner_id": self.owner_id,
+
             "created_at": self.created_at.isoformat(),
             "accessed_at": self.accessed_at.isoformat(),
             "history": self.history,

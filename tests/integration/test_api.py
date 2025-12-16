@@ -170,9 +170,7 @@ def test_global_event_log_route(monkeypatch):
     redis_client = fakeredis.FakeStrictRedis()
     monkeypatch.setattr("datacreek.api.get_redis_client", lambda: redis_client)
     monkeypatch.setattr("datacreek.services.get_redis_client", lambda: redis_client)
-    monkeypatch.setattr(
-        "datacreek.backends.get_redis_client", lambda config_path=None: redis_client
-    )
+    monkeypatch.setattr("datacreek.backends.get_redis_client", lambda config_path=None: redis_client)
     ds = DatasetBuilder(DatasetType.TEXT, name="glob")
     ds.redis_client = redis_client
     ds.add_document("d1", source="s")
@@ -490,10 +488,9 @@ def test_delete_persisted_dataset_route(monkeypatch):
     redis_client = fakeredis.FakeStrictRedis()
     monkeypatch.setattr("datacreek.api.get_redis_client", lambda: redis_client)
     monkeypatch.setattr("datacreek.services.get_redis_client", lambda: redis_client)
-    monkeypatch.setattr("datacreek.api.get_neo4j_driver", lambda: None)
-
     monkeypatch.setattr("datacreek.api.get_redis_client", lambda: redis_client)
     monkeypatch.setattr("datacreek.services.get_redis_client", lambda: redis_client)
+    monkeypatch.setattr("datacreek.backends.get_redis_client", lambda config_path=None: redis_client)
     monkeypatch.setattr("datacreek.api.get_neo4j_driver", lambda: None)
 
     ds = DatasetBuilder(DatasetType.TEXT, name="demo")
@@ -514,10 +511,9 @@ def test_explain_endpoint(monkeypatch):
     redis_client = fakeredis.FakeStrictRedis()
     monkeypatch.setattr("datacreek.api.get_redis_client", lambda: redis_client)
     monkeypatch.setattr("datacreek.services.get_redis_client", lambda: redis_client)
-    monkeypatch.setattr("datacreek.api.get_neo4j_driver", lambda: None)
-
     monkeypatch.setattr("datacreek.api.get_redis_client", lambda: redis_client)
     monkeypatch.setattr("datacreek.services.get_redis_client", lambda: redis_client)
+    monkeypatch.setattr("datacreek.backends.get_redis_client", lambda config_path=None: redis_client)
     monkeypatch.setattr("datacreek.api.get_neo4j_driver", lambda: None)
 
     ds = DatasetBuilder(DatasetType.TEXT, name="demo")

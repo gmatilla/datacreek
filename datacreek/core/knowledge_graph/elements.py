@@ -58,6 +58,30 @@ class ElementMixin:
             self.graph.nodes[doc_id]["text"] = text
             self.index.add(doc_id, text)
 
+    def extract_entities(
+        self, model: str | None = "en_core_web_sm"
+    ) -> None:  # pragma: no cover
+        """Extract entities from all document and chunk nodes."""
+        try:
+            from ...utils.entity_extraction import extract_entities as _extract
+        except ImportError:
+            return
+
+        for node, data in self.graph.nodes(data=True):
+            if data.get("type") in ("document", "chunk") and "text" in data:
+                text = data["text"]
+                entities = _extract(text, model=model)
+                if entities:
+                    # Update or add entities list on the node
+                    existing = data.get("entities", [])
+                    data["entities"] = list(set(existing + entities))
+                    # Optionally create entity nodes
+                    source = data.get("source")
+                    for ent in entities:
+                        if not self.graph.has_node(ent):
+                            self.add_entity(ent, ent, source=source)
+                        self.link_entity(node, ent, relation="mentions", provenance=source)
+
     def add_entity(
         self, entity_id: str, text: str, source: str | None = None
     ) -> None:  # pragma: no cover - heavy
